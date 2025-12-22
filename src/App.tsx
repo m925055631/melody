@@ -17,6 +17,7 @@ import {
   updateSong as updateSongInDB,
   searchSongWithAI,
   fetchSongDetailsWithAI,
+  enrichSongMetadata,
   trackVisit,
   getVisitorStats,
   listMusicFiles,
@@ -158,6 +159,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const SYNC_COOLDOWN_MS = 3600000; // 1 hour
     const LAST_SYNC_KEY = 'ctfile_last_sync';
+    const MAX_NEW_SONGS_PER_SYNC = 50; // Limit new songs per sync to avoid overload
 
     const shouldSync = () => {
       const lastSyncStr = localStorage.getItem(LAST_SYNC_KEY);
@@ -171,13 +173,31 @@ const App: React.FC = () => {
     };
 
     // Helper to extract song info from filename like "Artist - Title.flac"
+    // Also supports "Artist-Title.flac" format (without spaces)
     const extractSongInfoFromFilename = (filename: string): { artist: string; title: string } | null => {
-      const cleanName = filename.replace(/\.(flac|mp3|wav|m4a|ogg)$/i, '');
-      const parts = cleanName.split(' - ');
+      const cleanName = filename.replace(/\.(flac|mp3|wav|m4a|ogg|wma)$/i, '');
+
+      // Try " - " first (standard format)
+      let parts = cleanName.split(' - ');
       if (parts.length >= 2) {
         return { artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() };
       }
+
+      // Try "-" without spaces
+      parts = cleanName.split('-');
+      if (parts.length >= 2) {
+        return { artist: parts[0].trim(), title: parts.slice(1).join('-').trim() };
+      }
+
       return null;
+    };
+
+    // Check if song already exists in database (by title + artist match)
+    const songExistsInDB = (title: string, artist: string, existingSongs: Song[]): boolean => {
+      return existingSongs.some(s =>
+        s.title.toLowerCase() === title.toLowerCase() &&
+        s.artist.toLowerCase() === artist.toLowerCase()
+      );
     };
 
     const performSync = async () => {
@@ -202,10 +222,13 @@ const App: React.FC = () => {
 
         console.log(`Found ${files.length} files in CTFile`);
 
-        // Match files to existing songs and update audioUrl
+        // Get current songs snapshot
+        let currentSongs = [...songs];
+
+        // Phase 1: Match files to existing songs and update audioUrl
         let updatedCount = 0;
         const updatedSongs = await Promise.all(
-          songs.map(async (song) => {
+          currentSongs.map(async (song) => {
             // Skip if already has audio
             if (song.audioUrl) return song;
 
@@ -224,7 +247,7 @@ const App: React.FC = () => {
                 const audioUrl = await getPlayableUrl(matchingFile.key);
                 if (audioUrl) {
                   updatedCount++;
-                  console.log(`✓ Matched: ${song.title} - ${song.artist}`);
+                  console.log(`✓ Matched existing: ${song.title} - ${song.artist}`);
 
                   // Update in database
                   await updateSongInDB(song.id, { audioUrl });
@@ -239,8 +262,76 @@ const App: React.FC = () => {
           })
         );
 
-        // Deduplicate
-        const uniqueSongs = deduplicateSongs(updatedSongs);
+        currentSongs = updatedSongs;
+
+        // Phase 2: Import NEW songs from CTFile that don't exist in database
+        console.log('Phase 2: Checking for new songs to import...');
+
+        // Find files that don't match any existing song
+        const newFiles = files.filter(file => {
+          const info = extractSongInfoFromFilename(file.name);
+          if (!info) return false;
+          return !songExistsInDB(info.title, info.artist, currentSongs);
+        });
+
+        console.log(`Found ${newFiles.length} new songs to import (max ${MAX_NEW_SONGS_PER_SYNC} per sync)`);
+
+        // Process new songs (limited to prevent overload)
+        const filesToProcess = newFiles.slice(0, MAX_NEW_SONGS_PER_SYNC);
+        let importedCount = 0;
+
+        for (const file of filesToProcess) {
+          const info = extractSongInfoFromFilename(file.name);
+          if (!info) continue;
+
+          try {
+            // Get playable URL first
+            const audioUrl = await getPlayableUrl(file.key);
+            if (!audioUrl) continue;
+
+            // Try to enrich metadata with AI (non-blocking, use defaults if fails)
+            let metadata = await enrichSongMetadata(info.title, info.artist);
+
+            if (!metadata) {
+              // Use defaults if AI enrichment fails
+              metadata = {
+                title: info.title,
+                artist: info.artist,
+                releaseDate: new Date().toISOString().split('T')[0],
+                popularity: 50,
+                description: `由${info.artist}演唱的歌曲`,
+                coverUrl: `https://picsum.photos/seed/${info.title}_${info.artist}/300/300`
+              };
+            }
+
+            // Create new song object
+            const newSong: Song = {
+              id: `ctfile-${Date.now()}-${importedCount}`,
+              title: info.title,
+              artist: info.artist,
+              releaseDate: metadata.releaseDate,
+              popularity: metadata.popularity,
+              description: metadata.description,
+              coverUrl: metadata.coverUrl,
+              audioUrl: audioUrl
+            };
+
+            // Save to database
+            const createdSong = await createSong(newSong);
+            currentSongs.push(createdSong);
+            importedCount++;
+
+            console.log(`✓ Imported new: ${info.title} - ${info.artist}`);
+
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 100));
+          } catch (error) {
+            console.error(`Failed to import ${info.title} - ${info.artist}:`, error);
+          }
+        }
+
+        // Deduplicate and update state
+        const uniqueSongs = deduplicateSongs(currentSongs);
         setSongs(uniqueSongs);
 
         const now = new Date();
@@ -251,7 +342,12 @@ const App: React.FC = () => {
         const matched = uniqueSongs.filter(s => s.audioUrl).length;
         setMatchedSongsCount(matched);
 
-        console.log(`🎵 CTFile sync complete: ${matched}/${uniqueSongs.length} songs with audio, ${updatedCount} newly matched`);
+        console.log(`🎵 CTFile sync complete: ${matched}/${uniqueSongs.length} songs with audio`);
+        console.log(`   - ${updatedCount} existing songs matched`);
+        console.log(`   - ${importedCount} new songs imported`);
+        if (newFiles.length > MAX_NEW_SONGS_PER_SYNC) {
+          console.log(`   - ${newFiles.length - MAX_NEW_SONGS_PER_SYNC} more songs pending (will import on next sync)`);
+        }
       } catch (error) {
         console.error('CTFile sync failed:', error);
       } finally {
@@ -502,6 +598,18 @@ const App: React.FC = () => {
           isOpen={isLyricsModalOpen}
           onClose={() => setIsLyricsModalOpen(false)}
           song={currentSong}
+          onUpdateLyrics={async (songId, lyrics) => {
+            // Update local state
+            setSongs(prev => prev.map(s =>
+              s.id === songId ? { ...s, lyrics } : s
+            ));
+            // Sync to database
+            try {
+              await updateSongInDB(songId, { lyrics });
+            } catch (error) {
+              console.error('Failed to update lyrics in database:', error);
+            }
+          }}
         />
 
       </div>

@@ -49,7 +49,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
 
   // ---------------------------------------------------------------------------
-  // Layout Calculation Engine (Memoized)
+  // Layout Calculation Engine (Memoized) - Density-Aware Algorithm
   // ---------------------------------------------------------------------------
   const layout = useMemo(() => {
     // 1. Sort songs by date (essential for linear layout processing)
@@ -57,70 +57,101 @@ export const Timeline: React.FC<TimelineProps> = ({
       new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
     );
 
+    // 2. Pre-compute density maps for adaptive layout
+    // Group songs by time buckets (e.g., per month) to understand density
+    const BUCKET_SIZE_PX = 60; // ~60px bucket for density calculation
+    const songBuckets = new Map<number, Song[]>();
+
+    sortedSongs.forEach(song => {
+      const dateParts = song.releaseDate.split('-');
+      const year = parseInt(dateParts[0]);
+      const month = parseInt(dateParts[1]) || 1;
+
+      const x = isNaN(year) ? 0 :
+        ((year - START_YEAR) * pixelsPerYear) +
+        ((Math.max(0, month - 1) / 12) * pixelsPerYear) +
+        TIMELINE_PADDING;
+
+      const bucketKey = Math.floor(x / BUCKET_SIZE_PX);
+
+      if (!songBuckets.has(bucketKey)) {
+        songBuckets.set(bucketKey, []);
+      }
+      songBuckets.get(bucketKey)!.push(song);
+    });
+
+    // Find max density for normalization
+    let maxDensity = 1;
+    songBuckets.forEach(bucket => {
+      if (bucket.length > maxDensity) maxDensity = bucket.length;
+    });
+
+    console.log(`[Layout] Max density: ${maxDensity} songs in a bucket`);
+
     const positionedNodes: PositionedNode[] = [];
 
-    // Layout Constants
-    const X_COLLISION_THRESHOLD = 50; // Increased from 30 to better detect crowding
-    const SEVERE_COLLISION_THRESHOLD = 5; // Trigger jitter when 5+ songs at same time
-
-    // Define available vertical "slots" or "tracks" to organize crowded songs
-    // Expanded from 12 to 24 slots for better distribution (15% to 85% height)
-    const Y_SLOTS = [
-      15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
-      22, 27, 32, 37, 42, 47, 52, 57, 62, 67, 72, 77, 82
-    ];
+    // Track positions per bucket for even distribution
+    const bucketCounters = new Map<number, number>();
 
     sortedSongs.forEach((song) => {
       const dateParts = song.releaseDate.split('-');
       const year = parseInt(dateParts[0]);
-      const month = parseInt(dateParts[1]);
+      const month = parseInt(dateParts[1]) || 1;
 
-      // Calculate Ideal X based STRICTLY on time
+      // Calculate base X position
       const idealX = isNaN(year) ? 0 :
         ((year - START_YEAR) * pixelsPerYear) +
-        ((Math.max(0, isNaN(month) ? 0 : month - 1) / 12) * pixelsPerYear) +
+        ((Math.max(0, month - 1) / 12) * pixelsPerYear) +
         TIMELINE_PADDING;
 
-      // Calculate Ideal Y based on popularity (15-85 range, expanded)
-      let finalY = 15 + (song.popularity / 100) * 70;
+      const bucketKey = Math.floor(idealX / BUCKET_SIZE_PX);
+      const bucketSongs = songBuckets.get(bucketKey) || [];
+      const localDensity = bucketSongs.length;
+
+      // Get this song's index within its bucket
+      const bucketIndex = bucketCounters.get(bucketKey) || 0;
+      bucketCounters.set(bucketKey, bucketIndex + 1);
+
+      // 3. Calculate Y position based on local density
+      // For sparse areas: use popularity-based positioning (original behavior)
+      // For dense areas: use evenly distributed slots
+      let finalY: number;
       let finalX = idealX;
 
-      // Check collision with recently placed nodes
-      const neighbors = positionedNodes.filter(n => Math.abs(n.x - idealX) < X_COLLISION_THRESHOLD);
+      if (localDensity <= 3) {
+        // Sparse: use popularity (15-85% range)
+        finalY = 15 + (song.popularity / 100) * 70;
+      } else {
+        // Dense: distribute evenly using golden angle for better visual spread
+        // Golden angle (~137.5°) creates visually pleasing distributions
+        const goldenAngle = 137.508;
+
+        // Use golden ratio spiral for Y distribution (10% to 90% to avoid edges)
+        const goldenOffset = (bucketIndex * goldenAngle) % 360;
+        finalY = 10 + (goldenOffset / 360) * 80;
+
+        // Add small X jitter for very dense buckets to reduce overlap
+        if (localDensity > 8) {
+          // Spread horizontally within the bucket
+          const xSpread = Math.min(BUCKET_SIZE_PX * 0.8, 40);
+          const xOffset = ((bucketIndex % 5) - 2) * (xSpread / 5);
+          finalX = idealX + xOffset;
+        } else if (localDensity > 5) {
+          // Moderate spread
+          const xOffset = ((bucketIndex % 3) - 1) * 15;
+          finalX = idealX + xOffset;
+        }
+      }
+
+      // 4. Fine-tune: check against recently placed nodes to avoid exact overlaps
+      const neighbors = positionedNodes.filter(n =>
+        Math.abs(n.x - finalX) < 40 && Math.abs(n.y - finalY) < 8
+      );
 
       if (neighbors.length > 0) {
-        // Find a Y slot that maximizes distance from neighbors
-        let bestSlot = finalY;
-        let maxMinDist = -1;
-
-        // Try all predefined slots
-        for (const slotY of Y_SLOTS) {
-          // Calculate the minimum distance to any neighbor if we place it at this slotY
-          let currentMinDist = 1000; // Start high
-          for (const neighbor of neighbors) {
-            const dist = Math.abs(neighbor.y - slotY);
-            if (dist < currentMinDist) currentMinDist = dist;
-          }
-
-          if (currentMinDist > maxMinDist) {
-            maxMinDist = currentMinDist;
-            bestSlot = slotY;
-          }
-        }
-
-        // If even the best slot is too close (< 5%), add a small random jitter
-        if (maxMinDist < 5) {
-          finalY = bestSlot + (Math.random() * 6 - 3);
-        } else {
-          finalY = bestSlot;
-        }
-
-        // SEVERE CROWDING: Add smart X-axis jitter (keeps time accuracy within ±20px)
-        if (neighbors.length >= SEVERE_COLLISION_THRESHOLD) {
-          const jitterIndex = neighbors.length;
-          const jitter = ((jitterIndex % 3) - 1) * 15; // -15, 0, +15 cycle
-          finalX = idealX + jitter;
-        }
+        // Micro-adjust Y to avoid direct overlap
+        const yAdjust = (neighbors.length % 2 === 0 ? 1 : -1) * (5 + neighbors.length * 2);
+        finalY = Math.max(8, Math.min(92, finalY + yAdjust));
       }
 
       positionedNodes.push({
@@ -133,6 +164,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     console.log('[Timeline Debug] Layout calculated:', {
       totalSongs: songs.length,
       positionedNodes: positionedNodes.length,
+      maxDensity,
       sampleNode: positionedNodes[0]
     });
 
@@ -289,7 +321,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           }}
         >
           {/* Horizon */}
-          <div className="absolute bottom-[15%] w-full h-[1px] bg-gradient-to-r from-transparent via-neon-accent/20 to-transparent opacity-60 shadow-[0_0_15px_rgba(56,189,248,0.5)] blur-[0.5px]"></div>
+          <div className="absolute bottom-[5%] w-full h-[1px] bg-gradient-to-r from-transparent via-neon-accent/20 to-transparent opacity-60 shadow-[0_0_15px_rgba(56,189,248,0.5)] blur-[0.5px]"></div>
 
           {/* Years */}
           {YEARS.map((marker) => {
@@ -297,7 +329,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             return (
               <div
                 key={marker.year}
-                className="absolute h-full flex flex-col justify-end pb-8 group"
+                className="absolute h-full flex flex-col justify-end pb-2 group"
                 style={{ left: `${leftPos}px` }}
               >
                 <div className="h-[80%] w-[1px] bg-gradient-to-t from-slate-500/20 via-slate-500/5 to-transparent group-hover:from-neon-accent/30 transition-colors duration-700"></div>
@@ -325,7 +357,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               return (
                 <div
                   key={`${yearMarker.year}-${month}`}
-                  className="absolute h-full flex flex-col justify-end pb-8"
+                  className="absolute h-full flex flex-col justify-end pb-2"
                   style={{ left: `${leftPos}px` }}
                 >
                   <div className="h-[60%] w-[1px] bg-gradient-to-t from-slate-600/10 via-slate-600/5 to-transparent"></div>

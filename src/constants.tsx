@@ -5,7 +5,7 @@ export const START_YEAR = 2000; // Adjusted to match actual song data
 export const END_YEAR = new Date().getFullYear();
 export const PIXELS_PER_YEAR = 400; // Default width of one year
 export const MIN_PIXELS_PER_YEAR = 100; // Zoom out limit (dense)
-export const MAX_PIXELS_PER_YEAR = 1200; // Zoom in limit (sparse)
+export const MAX_PIXELS_PER_YEAR = 2400; // Zoom in limit (sparse) - doubled for more detail
 export const TIMELINE_PADDING = 800; // Padding start/end
 
 // A curated list of real Chinese pop songs from 2000 to present
