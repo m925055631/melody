@@ -506,23 +506,30 @@ const App: React.FC = () => {
   }
 
   return (
-    // Apple-style fluid gradient background with glassmorphism
+    // 3D Cosmic Space Background
     <div className="w-screen h-screen bg-slate-950 relative overflow-hidden font-sans text-slate-200">
 
-      <div className="relative w-screen h-screen overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-950">
-        {/* Floating Orbs for depth */}
-        <div
-          className="absolute top-[10%] left-[20%] w-96 h-96 rounded-full bg-blue-500/10 blur-3xl animate-fluid-1"
-        />
-        <div
-          className="absolute bottom-[15%] right-[25%] w-80 h-80 rounded-full bg-purple-500/10 blur-3xl animate-fluid-2"
-        />
-        <div
-          className="absolute inset-0 bg-gradient-to-bl from-sky-600/20 via-emerald-600/10 to-transparent animate-fluid-3"
-        />
+      {/* Fixed Cosmic Background Layer */}
+      <div className="cosmic-bg">
+        {/* Nebula Glow Effects */}
+        <div className="nebula nebula-1" />
+        <div className="nebula nebula-2" />
+        <div className="nebula nebula-3" />
 
-        {/* Glassmorphism overlay - frosted glass effect */}
-        <div className="absolute inset-0 backdrop-blur-[1px] bg-white/[0.02]" />
+        {/* Star Layers for Parallax Depth */}
+        <div className="stars stars-small" />
+        <div className="stars stars-medium" />
+        <div className="stars stars-large" />
+
+        {/* Shooting Stars */}
+        <div className="shooting-star" />
+        <div className="shooting-star" />
+        <div className="shooting-star" />
+      </div>
+
+      <div className="relative w-screen h-screen overflow-hidden">
+        {/* Subtle gradient overlay for depth */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-indigo-950/20 pointer-events-none" />
 
         {/* CTFile Sync Status */}
         <SyncStatusBadge

@@ -49,109 +49,133 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
 
   // ---------------------------------------------------------------------------
-  // Layout Calculation Engine (Memoized) - Density-Aware Algorithm
+  // Layout Calculation Engine (Memoized) - Non-Linear Density-Based X-Axis
   // ---------------------------------------------------------------------------
+
+  // Pre-compute density per month for non-linear X scaling
+  const monthDensityData = useMemo(() => {
+    const densityMap = new Map<string, number>(); // "YYYY-MM" -> count
+
+    songs.forEach(song => {
+      const dateParts = song.releaseDate.split('-');
+      const year = parseInt(dateParts[0]);
+      const month = parseInt(dateParts[1]) || 1;
+      if (!isNaN(year)) {
+        const key = `${year}-${String(month).padStart(2, '0')}`;
+        densityMap.set(key, (densityMap.get(key) || 0) + 1);
+      }
+    });
+
+    // Calculate cumulative X offsets based on density
+    // Each month gets a base width, plus extra width proportional to density
+    const BASE_MONTH_WIDTH = pixelsPerYear / 12;
+    const DENSITY_MULTIPLIER = 8; // Extra pixels per song in dense months
+
+    const xOffsets = new Map<string, { start: number; width: number }>();
+    let currentX = TIMELINE_PADDING;
+
+    // Create offset for all months from START_YEAR to END_YEAR
+    const END_YEAR = new Date().getFullYear();
+    for (let year = START_YEAR; year <= END_YEAR; year++) {
+      for (let month = 1; month <= 12; month++) {
+        const key = `${year}-${String(month).padStart(2, '0')}`;
+        const count = densityMap.get(key) || 0;
+
+        // Calculate width: base + extra for density
+        const extraWidth = count > 3 ? (count - 3) * DENSITY_MULTIPLIER : 0;
+        const width = BASE_MONTH_WIDTH + extraWidth;
+
+        xOffsets.set(key, { start: currentX, width });
+        currentX += width;
+      }
+    }
+
+    return { densityMap, xOffsets, totalWidth: currentX + TIMELINE_PADDING };
+  }, [songs, pixelsPerYear]);
+
   const layout = useMemo(() => {
-    // 1. Sort songs by date (essential for linear layout processing)
+    const { densityMap, xOffsets } = monthDensityData;
+
+    // 1. Sort songs by date
     const sortedSongs = [...songs].sort((a, b) =>
       new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
     );
 
-    // 2. Pre-compute density maps for adaptive layout
-    // Group songs by time buckets (e.g., per month) to understand density
-    const BUCKET_SIZE_PX = 60; // ~60px bucket for density calculation
-    const songBuckets = new Map<number, Song[]>();
-
-    sortedSongs.forEach(song => {
-      const dateParts = song.releaseDate.split('-');
-      const year = parseInt(dateParts[0]);
-      const month = parseInt(dateParts[1]) || 1;
-
-      const x = isNaN(year) ? 0 :
-        ((year - START_YEAR) * pixelsPerYear) +
-        ((Math.max(0, month - 1) / 12) * pixelsPerYear) +
-        TIMELINE_PADDING;
-
-      const bucketKey = Math.floor(x / BUCKET_SIZE_PX);
-
-      if (!songBuckets.has(bucketKey)) {
-        songBuckets.set(bucketKey, []);
-      }
-      songBuckets.get(bucketKey)!.push(song);
-    });
-
-    // Find max density for normalization
-    let maxDensity = 1;
-    songBuckets.forEach(bucket => {
-      if (bucket.length > maxDensity) maxDensity = bucket.length;
-    });
-
-    console.log(`[Layout] Max density: ${maxDensity} songs in a bucket`);
-
     const positionedNodes: PositionedNode[] = [];
 
-    // Track positions per bucket for even distribution
-    const bucketCounters = new Map<number, number>();
+    // Track how many songs placed in each month for Y distribution
+    const monthCounters = new Map<string, number>();
 
     sortedSongs.forEach((song) => {
       const dateParts = song.releaseDate.split('-');
       const year = parseInt(dateParts[0]);
       const month = parseInt(dateParts[1]) || 1;
+      const day = parseInt(dateParts[2]) || 15; // Default to mid-month
 
-      // Calculate base X position
-      const idealX = isNaN(year) ? 0 :
-        ((year - START_YEAR) * pixelsPerYear) +
-        ((Math.max(0, month - 1) / 12) * pixelsPerYear) +
-        TIMELINE_PADDING;
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const offset = xOffsets.get(monthKey);
 
-      const bucketKey = Math.floor(idealX / BUCKET_SIZE_PX);
-      const bucketSongs = songBuckets.get(bucketKey) || [];
-      const localDensity = bucketSongs.length;
-
-      // Get this song's index within its bucket
-      const bucketIndex = bucketCounters.get(bucketKey) || 0;
-      bucketCounters.set(bucketKey, bucketIndex + 1);
-
-      // 3. Calculate Y position based on local density
-      // For sparse areas: use popularity-based positioning (original behavior)
-      // For dense areas: use evenly distributed slots
-      let finalY: number;
-      let finalX = idealX;
-
-      if (localDensity <= 3) {
-        // Sparse: use popularity (15-85% range)
-        finalY = 15 + (song.popularity / 100) * 70;
-      } else {
-        // Dense: distribute evenly using golden angle for better visual spread
-        // Golden angle (~137.5°) creates visually pleasing distributions
-        const goldenAngle = 137.508;
-
-        // Use golden ratio spiral for Y distribution (10% to 90% to avoid edges)
-        const goldenOffset = (bucketIndex * goldenAngle) % 360;
-        finalY = 10 + (goldenOffset / 360) * 80;
-
-        // Add small X jitter for very dense buckets to reduce overlap
-        if (localDensity > 8) {
-          // Spread horizontally within the bucket
-          const xSpread = Math.min(BUCKET_SIZE_PX * 0.8, 40);
-          const xOffset = ((bucketIndex % 5) - 2) * (xSpread / 5);
-          finalX = idealX + xOffset;
-        } else if (localDensity > 5) {
-          // Moderate spread
-          const xOffset = ((bucketIndex % 3) - 1) * 15;
-          finalX = idealX + xOffset;
-        }
+      if (!offset) {
+        // Fallback for songs outside range
+        positionedNodes.push({
+          song,
+          x: TIMELINE_PADDING,
+          y: 50
+        });
+        return;
       }
 
-      // 4. Fine-tune: check against recently placed nodes to avoid exact overlaps
-      const neighbors = positionedNodes.filter(n =>
-        Math.abs(n.x - finalX) < 40 && Math.abs(n.y - finalY) < 8
-      );
+      // Calculate X position within the month's allocated space
+      const dayFraction = (day - 1) / 30; // Normalize day to 0-1
+      let finalX = offset.start + dayFraction * offset.width;
 
-      if (neighbors.length > 0) {
-        // Micro-adjust Y to avoid direct overlap
-        const yAdjust = (neighbors.length % 2 === 0 ? 1 : -1) * (5 + neighbors.length * 2);
-        finalY = Math.max(8, Math.min(92, finalY + yAdjust));
+      // Get density for Y distribution
+      const localDensity = densityMap.get(monthKey) || 1;
+      const monthIndex = monthCounters.get(monthKey) || 0;
+      monthCounters.set(monthKey, monthIndex + 1);
+
+      // Minimum spacing requirements
+      const MIN_Y_SPACING = 10;
+      const MIN_X_SPACING = 20;
+
+      // Calculate Y based on density
+      let finalY: number;
+
+      if (localDensity <= 3) {
+        // Sparse: use popularity
+        finalY = 15 + (song.popularity / 100) * 70;
+      } else {
+        // Dense: grid distribution
+        const gridCols = Math.ceil(Math.sqrt(localDensity));
+        const gridRows = Math.ceil(localDensity / gridCols);
+
+        const col = monthIndex % gridCols;
+        const row = Math.floor(monthIndex / gridCols);
+
+        finalY = 10 + (row / Math.max(1, gridRows - 1)) * 80;
+        if (gridRows <= 1) finalY = 50;
+
+        // Distribute X within the month
+        const xWithinMonth = (col / Math.max(1, gridCols - 1)) * (offset.width * 0.8);
+        finalX = offset.start + offset.width * 0.1 + xWithinMonth;
+        if (gridCols <= 1) finalX = offset.start + offset.width / 2;
+      }
+
+      // Collision detection
+      let attempts = 0;
+      while (attempts < 15) {
+        const overlapping = positionedNodes.find(n =>
+          Math.abs(n.x - finalX) < MIN_X_SPACING && Math.abs(n.y - finalY) < MIN_Y_SPACING
+        );
+
+        if (!overlapping) break;
+
+        const angle = attempts * 137.508 * (Math.PI / 180);
+        const radius = 5 + attempts * 3;
+
+        finalY = Math.max(8, Math.min(92, finalY + Math.sin(angle) * radius * 0.8));
+        finalX = finalX + Math.cos(angle) * radius * 0.3;
+        attempts++;
       }
 
       positionedNodes.push({
@@ -161,15 +185,14 @@ export const Timeline: React.FC<TimelineProps> = ({
       });
     });
 
-    console.log('[Timeline Debug] Layout calculated:', {
+    console.log('[Timeline] Non-linear layout:', {
       totalSongs: songs.length,
-      positionedNodes: positionedNodes.length,
-      maxDensity,
-      sampleNode: positionedNodes[0]
+      totalWidth: monthDensityData.totalWidth,
+      positionedNodes: positionedNodes.length
     });
 
     return positionedNodes;
-  }, [songs, pixelsPerYear]);
+  }, [songs, monthDensityData]);
 
   // ---------------------------------------------------------------------------
   // Auto-Scroll to Searched Song
@@ -292,11 +315,9 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Helpers
   // ---------------------------------------------------------------------------
   const totalWidth = useMemo(() => {
-    // We base total width on the furthest node + padding, or the standard length, whichever is larger
-    const maxNodeX = layout.length > 0 ? layout[layout.length - 1].x : 0;
-    const standardWidth = (YEARS.length * pixelsPerYear) + (TIMELINE_PADDING * 2);
-    return Math.max(standardWidth, maxNodeX + TIMELINE_PADDING);
-  }, [pixelsPerYear, layout]);
+    // Use density-based total width
+    return monthDensityData.totalWidth;
+  }, [monthDensityData]);
 
   const handleZoomIn = () => setPixelsPerYear(p => Math.min(MAX_PIXELS_PER_YEAR, p + 200));
   const handleZoomOut = () => setPixelsPerYear(p => Math.max(MIN_PIXELS_PER_YEAR, p - 200));
@@ -325,7 +346,10 @@ export const Timeline: React.FC<TimelineProps> = ({
 
           {/* Years */}
           {YEARS.map((marker) => {
-            const leftPos = (marker.year - START_YEAR) * pixelsPerYear + TIMELINE_PADDING;
+            // Get position from density-based layout (January of this year)
+            const monthKey = `${marker.year}-01`;
+            const offset = monthDensityData.xOffsets.get(monthKey);
+            const leftPos = offset ? offset.start : TIMELINE_PADDING;
             return (
               <div
                 key={marker.year}
@@ -350,9 +374,10 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* Month Markers (shown when zoomed in) */}
           {pixelsPerYear > 600 && YEARS.map((yearMarker) => {
             const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
-            return monthNames.map((month, idx) => {
-              const monthFraction = idx / 12;
-              const leftPos = ((yearMarker.year - START_YEAR) + monthFraction) * pixelsPerYear + TIMELINE_PADDING;
+            return monthNames.map((month) => {
+              const monthKey = `${yearMarker.year}-${month}`;
+              const offset = monthDensityData.xOffsets.get(monthKey);
+              const leftPos = offset ? offset.start : TIMELINE_PADDING;
 
               return (
                 <div
