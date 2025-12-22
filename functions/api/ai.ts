@@ -305,95 +305,117 @@ async function handleGetPlayableUrl(env: Env, fileKey: string) {
 }
 
 // ============================================================================
-// Main Handler
+// Cloudflare Pages Functions Handler
 // ============================================================================
 
-export default {
-    async fetch(request: Request, env: Env): Promise<Response> {
-        // Handle CORS preflight
-        if (request.method === "OPTIONS") {
-            return new Response(null, { headers: corsHeaders });
-        }
-
-        // Only allow POST requests
-        if (request.method !== "POST") {
-            return new Response("Method not allowed", {
-                status: 405,
-                headers: corsHeaders
-            });
-        }
-
-        try {
-            const { action, data } = await request.json();
-            let result;
-
-            switch (action) {
-                // AI Operations
-                case "searchSong":
-                    result = await handleSearchSong(env.OPENROUTER_API_KEY, data.query);
-                    break;
-
-                case "fetchLyrics":
-                    result = await handleFetchLyrics(env.OPENROUTER_API_KEY, data.title, data.artist);
-                    break;
-
-                case "enrichMetadata":
-                    result = await handleEnrichMetadata(env.OPENROUTER_API_KEY, data.title, data.artist);
-                    break;
-
-                // Supabase Operations
-                case "getAllSongs":
-                    result = await handleGetAllSongs(env);
-                    break;
-
-                case "createSong":
-                    result = await handleCreateSong(env, data.song);
-                    break;
-
-                case "updateSong":
-                    result = await handleUpdateSong(env, data.id, data.updates);
-                    break;
-
-                case "deleteSong":
-                    result = await handleDeleteSong(env, data.id);
-                    break;
-
-                // CTFile Operations
-                case "listMusicFiles":
-                    result = await handleListMusicFiles(env);
-                    break;
-
-                case "getPlayableUrl":
-                    result = await handleGetPlayableUrl(env, data.fileKey);
-                    break;
-
-                // Visitor Statistics Operations
-                case "trackVisit":
-                    const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
-                    const userAgent = request.headers.get('user-agent') || '';
-                    result = await handleTrackVisit(env, ip, userAgent);
-                    break;
-
-                case "getStats":
-                    result = await handleGetStats(env);
-                    break;
-
-                default:
-                    return new Response(
-                        JSON.stringify({ error: "Invalid action" }),
-                        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                    );
-            }
-
-            return new Response(JSON.stringify(result), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" }
-            });
-        } catch (error) {
-            console.error("Worker error:", error);
-            return new Response(
-                JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
+// Handler function for incoming requests
+async function handleRequest(request: Request, env: Env): Promise<Response> {
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+        return new Response(null, { headers: corsHeaders });
     }
+
+    // Only allow POST requests
+    if (request.method !== "POST") {
+        return new Response("Method not allowed", {
+            status: 405,
+            headers: corsHeaders
+        });
+    }
+
+    try {
+        const { action, data } = await request.json();
+        let result;
+
+        switch (action) {
+            // AI Operations
+            case "searchSong":
+                result = await handleSearchSong(env.OPENROUTER_API_KEY, data.query);
+                break;
+
+            case "fetchLyrics":
+                result = await handleFetchLyrics(env.OPENROUTER_API_KEY, data.title, data.artist);
+                break;
+
+            case "enrichMetadata":
+                result = await handleEnrichMetadata(env.OPENROUTER_API_KEY, data.title, data.artist);
+                break;
+
+            // Supabase Operations
+            case "getAllSongs":
+                result = await handleGetAllSongs(env);
+                break;
+
+            case "createSong":
+                result = await handleCreateSong(env, data.song);
+                break;
+
+            case "updateSong":
+                result = await handleUpdateSong(env, data.id, data.updates);
+                break;
+
+            case "deleteSong":
+                result = await handleDeleteSong(env, data.id);
+                break;
+
+            // CTFile Operations
+            case "listMusicFiles":
+                result = await handleListMusicFiles(env);
+                break;
+
+            case "getPlayableUrl":
+                result = await handleGetPlayableUrl(env, data.fileKey);
+                break;
+
+            // Visitor Statistics Operations
+            case "trackVisit":
+                const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+                const userAgent = request.headers.get('user-agent') || '';
+                result = await handleTrackVisit(env, ip, userAgent);
+                break;
+
+            case "getStats":
+                result = await handleGetStats(env);
+                break;
+
+            default:
+                return new Response(
+                    JSON.stringify({ error: "Invalid action" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+        }
+
+        return new Response(JSON.stringify(result), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
+    } catch (error) {
+        console.error("Worker error:", error);
+        return new Response(
+            JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+}
+
+// Cloudflare Pages Functions exports
+// PagesFunction type for Cloudflare Pages
+interface PagesContext {
+    request: Request;
+    env: Env;
+    params: Record<string, string>;
+    waitUntil: (promise: Promise<unknown>) => void;
+    passThroughOnException: () => void;
+    next: () => Promise<Response>;
+}
+
+export const onRequest = async (context: PagesContext): Promise<Response> => {
+    return handleRequest(context.request, context.env);
+};
+
+export const onRequestPost = async (context: PagesContext): Promise<Response> => {
+    return handleRequest(context.request, context.env);
+};
+
+export const onRequestOptions = async (_context: PagesContext): Promise<Response> => {
+    return new Response(null, { headers: corsHeaders });
 };
