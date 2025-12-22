@@ -39,13 +39,12 @@ dist
 | 变量名 | 值（示例） | 说明 |
 |--------|-----------|------|
 | `OPENROUTER_API_KEY` | `sk-or-v1-2f952dcf...` | OpenRouter API密钥 |
-| `SUPABASE_URL` | `https://sbp-2o0ycwcbagexxjpc...` | Supabase项目URL |
-| `SUPABASE_ANON_KEY` | `eyJ0eXAiOiJKV1QiLCJhbGci...` | Supabase匿名密钥 |
-| `CTFILE_FOLDER_ID` | `d158245757` | CTFile文件夹ID |
-| `CTFILE_TOKEN` | `5933ca3f8ef44b3fdc27a14f12f6cb93` | CTFile访问令牌 |
+| `SUPABASE_URL` | `https://sbp-2o...` | Supabase项目URL |
+| `SUPABASE_ANON_KEY` | `ey...` | Supabase匿名密钥 |
+| `CTFILE_FOLDER_ID` | `d15...` | CTFile文件夹ID |
+| `CTFILE_TOKEN` | `593...` | CTFile访问令牌 |
 
 > **重要规则**: 
-> - **所有变量都不加 `VITE_` 前缀**
 > - 这些变量只在 Worker 中使用，浏览器无法访问
 > - 前端通过调用 `/api/ai` Worker API 间接使用这些服务
 
@@ -64,9 +63,9 @@ https://your-project.pages.dev
 ```
 
 测试功能：
-- 搜索歌曲
+- 搜索和播放歌曲
+- 下载歌曲
 - 查看歌词
-- CTFile 自动同步
 
 ## 架构说明
 
@@ -79,12 +78,6 @@ Cloudflare Worker (密钥只在这里)
     ↓ (HTTPS + API Key)
 OpenRouter / Supabase / CTFile
 ```
-
-**安全优势**：
-- ✅ **所有 API Key 只存在于 Worker 环境变量**
-- ✅ 永不暴露到前端 JavaScript 代码
-- ✅ 访客无法通过浏览器开发者工具看到密钥
-- ✅ 可以在 Worker 中添加访问控制和限流
 
 ## 故障排查
 
@@ -123,19 +116,3 @@ OpenRouter / Supabase / CTFile
 3. 更新生产环境
 
 无需手动操作！
-
-## 环境变量配置清单
-
-部署前，请确保在 Cloudflare Pages 设置中配置了以下**所有**变量：
-
-- [ ] `OPENROUTER_API_KEY` - AI 服务
-- [ ] `SUPABASE_URL` - 数据库 URL
-- [ ] `SUPABASE_ANON_KEY` - 数据库访问密钥
-- [ ] `CTFILE_FOLDER_ID` - 云存储文件夹 ID
-- [ ] `CTFILE_TOKEN` - 云存储访问令牌
-
-### 变量值来源
-
-这些值可以从您的本地 `.dev.vars` 文件中复制到 Cloudflare Dashboard。
-
-**注意**：不要将 `.dev.vars` 文件上传到 GitHub！
