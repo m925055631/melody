@@ -135,30 +135,40 @@ export const Timeline: React.FC<TimelineProps> = ({
       monthCounters.set(monthKey, monthIndex + 1);
 
       // Minimum spacing requirements
-      const MIN_Y_SPACING = 10;
+      const MIN_Y_SPACING = 8;
       const MIN_X_SPACING = 20;
 
-      // Calculate Y based on density
+      // Calculate Y with varied distribution - avoid horizontal lines
       let finalY: number;
 
-      if (localDensity <= 3) {
-        // Sparse: use popularity
-        finalY = 15 + (song.popularity / 100) * 70;
-      } else {
-        // Dense: grid distribution
-        const gridCols = Math.ceil(Math.sqrt(localDensity));
-        const gridRows = Math.ceil(localDensity / gridCols);
+      // Use multiple factors for Y position to create natural scatter:
+      // 1. Base from popularity (provides some order)
+      // 2. Golden angle offset based on song index for variety
+      // 3. Hash-based micro-offset for uniqueness
 
-        const col = monthIndex % gridCols;
-        const row = Math.floor(monthIndex / gridCols);
+      const popularityY = 15 + (song.popularity / 100) * 60; // 15-75% based on popularity
 
-        finalY = 10 + (row / Math.max(1, gridRows - 1)) * 80;
-        if (gridRows <= 1) finalY = 50;
+      // Golden angle creates natural-looking spiral distribution
+      const goldenAngle = 137.508;
+      const globalIndex = positionedNodes.length;
+      const goldenOffset = ((globalIndex * goldenAngle) % 360) / 360 * 30 - 15; // ±15% offset
 
-        // Distribute X within the month
-        const xWithinMonth = (col / Math.max(1, gridCols - 1)) * (offset.width * 0.8);
-        finalX = offset.start + offset.width * 0.1 + xWithinMonth;
-        if (gridCols <= 1) finalX = offset.start + offset.width / 2;
+      // Hash based on song name for consistent but varied positioning
+      const hash = (song.title.charCodeAt(0) || 0) + (song.artist.charCodeAt(0) || 0);
+      const hashOffset = (hash % 20) - 10; // ±10% offset
+
+      // Combine all factors
+      finalY = popularityY + goldenOffset + hashOffset;
+
+      // Clamp to valid range (10-90%)
+      finalY = Math.max(10, Math.min(90, finalY));
+
+      // For dense months, add extra X spreading
+      if (localDensity > 3) {
+        const spreadFactor = Math.min(localDensity, 15) / 15;
+        const xSpread = offset.width * 0.8 * spreadFactor;
+        const xOffset = ((monthIndex % 5) - 2) * (xSpread / 5);
+        finalX = offset.start + offset.width * 0.1 + (monthIndex / localDensity) * offset.width * 0.8 + xOffset * 0.3;
       }
 
       // Collision detection

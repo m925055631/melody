@@ -304,9 +304,9 @@ const App: React.FC = () => {
               };
             }
 
-            // Create new song object
+            // Create new song object with proper UUID
             const newSong: Song = {
-              id: `ctfile-${Date.now()}-${importedCount}`,
+              id: crypto.randomUUID(),
               title: info.title,
               artist: info.artist,
               releaseDate: metadata.releaseDate,
