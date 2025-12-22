@@ -17,8 +17,21 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isSearching }) =
   };
 
   return (
-    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-md px-4">
-      <form onSubmit={handleSubmit} className="relative group">
+    <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4">
+      {/* Logo & Title - Left */}
+      <div className="flex items-center gap-3 group">
+        <img
+          src="/vite.svg"
+          alt="米乐迪音乐"
+          className="w-8 h-8 drop-shadow-[0_0_8px_rgba(56,189,248,0.6)] group-hover:drop-shadow-[0_0_12px_rgba(56,189,248,0.9)] transition-all duration-300"
+        />
+        <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-300 via-sky-400 to-blue-500 bg-clip-text text-transparent drop-shadow-lg select-none">
+          米乐迪音乐
+        </h1>
+      </div>
+
+      {/* Search Bar - Center */}
+      <form onSubmit={handleSubmit} className="relative group flex-1 max-w-md mx-auto">
         <div className="absolute inset-0 bg-neon-accent/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
         <input
           type="text"
@@ -32,6 +45,9 @@ export const SearchBar: React.FC<SearchBarProps> = ({ onSearch, isSearching }) =
           {isSearching ? <Loader2 className="animate-spin" size={20} /> : <Search size={20} />}
         </div>
       </form>
+
+      {/* Spacer for symmetry - Right */}
+      <div className="w-32"></div>
     </div>
   );
 };
