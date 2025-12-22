@@ -82,17 +82,16 @@ export const Timeline: React.FC<TimelineProps> = ({
         const count = densityMap.get(key) || 0;
 
         // Calculate width: base + extra for density (tiered)
-        // Tier 1: > 3 songs: +8px per song
-        // Tier 2: > 20 songs: +20px per song (additional)
+
         let extraWidth = 0;
         if (count > 3) {
           extraWidth += (Math.min(count, 20) - 3) * DENSITY_MULTIPLIER; // Tier 1: 4-20 songs
         }
         if (count > 10) {
-          extraWidth += (count - 10) * 20; // Tier 2: 21+ songs get extra 20px each
+          extraWidth += (count - 10) * 40; // Tier 2: 21+ songs get extra 20px each
         }
         if (count > 20) {
-          extraWidth += (count - 20) * 40;
+          extraWidth += (count - 20) * 80;
         }
         const width = BASE_MONTH_WIDTH + extraWidth;
 
@@ -267,7 +266,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         const zoomFactor = delta > 0 ? 0.9 : 1.1;
         setYAxisScale(s => {
           const newScale = Math.min(3, Math.max(0.5, s * zoomFactor));
-          console.log('[Y-Axis Zoom]', { deltaX: e.deltaX, deltaY: e.deltaY, delta, zoomFactor, oldScale: s, newScale });
+          //console.log('[Y-Axis Zoom]', { deltaX: e.deltaX, deltaY: e.deltaY, delta, zoomFactor, oldScale: s, newScale });
           return newScale;
         });
       }

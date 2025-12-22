@@ -172,21 +172,23 @@ const App: React.FC = () => {
       return elapsed >= SYNC_COOLDOWN_MS;
     };
 
-    // Helper to extract song info from filename like "Artist - Title.flac"
-    // Also supports "Artist-Title.flac" format (without spaces)
+    // Helper to extract song info from filename like "歌曲名-作者.flac" (Title-Artist format)
+    // Also supports "Title - Artist.flac" format (with spaces)
     const extractSongInfoFromFilename = (filename: string): { artist: string; title: string } | null => {
       const cleanName = filename.replace(/\.(flac|mp3|wav|m4a|ogg|wma)$/i, '');
 
-      // Try " - " first (standard format)
+      // Try " - " first (standard format: Title - Artist)
       let parts = cleanName.split(' - ');
       if (parts.length >= 2) {
-        return { artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() };
+        // Format: Title - Artist
+        return { title: parts[0].trim(), artist: parts.slice(1).join(' - ').trim() };
       }
 
-      // Try "-" without spaces
+      // Try "-" without spaces (Format: Title-Artist)
       parts = cleanName.split('-');
       if (parts.length >= 2) {
-        return { artist: parts[0].trim(), title: parts.slice(1).join('-').trim() };
+        // Format: Title-Artist
+        return { title: parts[0].trim(), artist: parts.slice(1).join('-').trim() };
       }
 
       return null;
