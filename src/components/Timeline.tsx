@@ -69,7 +69,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     // Calculate cumulative X offsets based on density
     // Each month gets a base width, plus extra width proportional to density
     const BASE_MONTH_WIDTH = pixelsPerYear / 12;
-    const DENSITY_MULTIPLIER = 8; // Extra pixels per song in dense months
+    const DENSITY_MULTIPLIER = 10; // Extra pixels per song in dense months
 
     const xOffsets = new Map<string, { start: number; width: number }>();
     let currentX = TIMELINE_PADDING;
@@ -81,8 +81,19 @@ export const Timeline: React.FC<TimelineProps> = ({
         const key = `${year}-${String(month).padStart(2, '0')}`;
         const count = densityMap.get(key) || 0;
 
-        // Calculate width: base + extra for density
-        const extraWidth = count > 3 ? (count - 3) * DENSITY_MULTIPLIER : 0;
+        // Calculate width: base + extra for density (tiered)
+        // Tier 1: > 3 songs: +8px per song
+        // Tier 2: > 20 songs: +20px per song (additional)
+        let extraWidth = 0;
+        if (count > 3) {
+          extraWidth += (Math.min(count, 20) - 3) * DENSITY_MULTIPLIER; // Tier 1: 4-20 songs
+        }
+        if (count > 10) {
+          extraWidth += (count - 10) * 20; // Tier 2: 21+ songs get extra 20px each
+        }
+        if (count > 20) {
+          extraWidth += (count - 20) * 40;
+        }
         const width = BASE_MONTH_WIDTH + extraWidth;
 
         xOffsets.set(key, { start: currentX, width });
@@ -213,17 +224,29 @@ export const Timeline: React.FC<TimelineProps> = ({
       const targetNode = layout.find(n => n.song.id === searchedSongId);
 
       if (targetNode) {
-        // Center the node
-        const halfScreen = window.innerWidth / 2;
-        const targetScroll = targetNode.x - halfScreen;
+        const container = containerRef.current;
 
-        containerRef.current.scrollTo({
-          left: targetScroll,
+        // Center horizontally
+        const halfScreenX = window.innerWidth / 2;
+        const targetScrollX = targetNode.x - halfScreenX;
+
+        // Center vertically - account for Y-axis scaling
+        const containerHeight = container.clientHeight;
+        const scaledContentHeight = containerHeight * yAxisScale;
+        const halfScreenY = containerHeight / 2;
+
+        // Convert percentage Y (0-100) to actual pixel position
+        const actualY = (targetNode.y / 100) * scaledContentHeight;
+        const targetScrollY = actualY - halfScreenY;
+
+        container.scrollTo({
+          left: Math.max(0, targetScrollX),
+          top: Math.max(0, targetScrollY),
           behavior: 'smooth'
         });
       }
     }
-  }, [searchedSongId, layout]); // Re-run if ID changes or Layout changes (zoom)
+  }, [searchedSongId, layout, yAxisScale]); // Re-run if ID changes, Layout changes, or Y scale changes
 
   // ---------------------------------------------------------------------------
   // Zoom Logic: Command+Scroll for horizontal, Shift+Scroll for vertical, Scroll for page scroll
