@@ -66,7 +66,7 @@ async function callOpenRouter(
 }
 
 async function handleSearchSong(apiKey: string, query: string) {
-    const prompt = `Search for the Chinese song "${query}". If it exists and was released between 1950 and 2024, return its details in JSON format with this structure:
+    const prompt = `Search for the song "${query}". If it exists and was released between 1950 and 2026, return its details in JSON format with this structure:
 {
   "found": true/false,
   "song": {
@@ -82,7 +82,7 @@ If not found or outside the year range, set found to false and song to null.`;
     return await callOpenRouter(
         apiKey,
         prompt,
-        "You are a music information expert specializing in Chinese popular music."
+        "You are a music information expert specializing in popular music."
     );
 }
 
@@ -103,7 +103,7 @@ Return JSON in this format:
 }
 
 async function handleEnrichMetadata(apiKey: string, title: string, artist: string) {
-    const prompt = `Find information about the Chinese song "${title}" by "${artist}". Return JSON in this format:
+    const prompt = `Find information about the song "${title}" by "${artist}". Return JSON in this format:
 {
   "found": true/false,
   "metadata": {
@@ -113,12 +113,12 @@ async function handleEnrichMetadata(apiKey: string, title: string, artist: strin
     "visualPrompt": "short_visual_keywords"
   }
 }
-If song not found or outside 1950-2024 range, set found to false.`;
+If song not found or outside 1950-2026 range, set found to false.`;
 
     return await callOpenRouter(
         apiKey,
         prompt,
-        "You are a music information expert specializing in Chinese popular music."
+        "You are a music information expert specializing in popular music."
     );
 }
 

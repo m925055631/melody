@@ -1,6 +1,5 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
 import { Timeline } from './components/Timeline';
 import { SearchBar } from './components/SearchBar';
 import { AudioPlayer } from './components/AudioPlayer';
@@ -9,6 +8,7 @@ import { BottomPlayerBar } from './components/BottomPlayerBar';
 import { LyricsModal } from './components/LyricsModal';
 import { SyncStatusBadge } from './components/SyncStatusBadge';
 import { VisitorStats } from './components/VisitorStats';
+import { MobileSongList } from './components/MobileSongList';
 import { MOCK_DATABASE } from './constants';
 import type { Song } from './types';
 // All backend operations go through secure Worker proxy (no secrets exposed in browser)
@@ -41,6 +41,18 @@ const App: React.FC = () => {
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [matchedSongsCount, setMatchedSongsCount] = useState(0);
   const [visitorStats, setVisitorStats] = useState({ totalVisits: 0, activeUsers: 0 });
+
+  // Mobile detection
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640); // 640px = Tailwind 'sm' breakpoint
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Deduplicate songs by title + artist (keep the first occurrence with audioUrl if possible)
   const deduplicateSongs = useCallback((songs: Song[]): Song[] => {
@@ -129,7 +141,7 @@ const App: React.FC = () => {
     // Don't block - run asynchronously
     trackAndGetStats();
 
-    // Update stats every 30 seconds
+    // Update stats every 600 seconds
     const interval = setInterval(async () => {
       try {
         const stats = await getVisitorStats();
@@ -138,7 +150,7 @@ const App: React.FC = () => {
         // Silently fail
         console.debug('Failed to get stats');
       }
-    }, 30000);
+    }, 600000);
 
     return () => clearInterval(interval);
   }, []);
@@ -157,211 +169,212 @@ const App: React.FC = () => {
 
   // CTFile Music Sync - Smart throttling to avoid redundant syncs
   // Uses Worker API (no secrets exposed in browser)
+  useEffect(() => {
+    const SYNC_COOLDOWN_MS = 1800000; // 0.5 hour
+    const LAST_SYNC_KEY = 'ctfile_last_sync';
+    const MAX_NEW_SONGS_PER_SYNC = 50; // Limit new songs per sync to avoid overload
 
-  const SYNC_COOLDOWN_MS = 3600000; // 1 hour
-  const LAST_SYNC_KEY = 'ctfile_last_sync';
-  const MAX_NEW_SONGS_PER_SYNC = 50; // Limit new songs per sync to avoid overload
-
-  // Helper to extract song info from filename like "歌曲名-作者.flac" (Title-Artist format)
-  const extractSongInfoFromFilename = useCallback((filename: string): { artist: string; title: string } | null => {
-    const cleanName = filename.replace(/\.(flac|mp3|wav|m4a|ogg|wma)$/i, '');
-
-    // Try " - " first (standard format: Title - Artist)
-    let parts = cleanName.split(' - ');
-    if (parts.length >= 2) {
-      return { title: parts[0].trim(), artist: parts.slice(1).join(' - ').trim() };
-    }
-
-    // Try "-" without spaces (Format: Title-Artist)
-    parts = cleanName.split('-');
-    if (parts.length >= 2) {
-      return { title: parts[0].trim(), artist: parts.slice(1).join('-').trim() };
-    }
-
-    return null;
-  }, []);
-
-  // Check if song already exists in database (by title + artist match)
-  const songExistsInDB = useCallback((title: string, artist: string, existingSongs: Song[]): boolean => {
-    return existingSongs.some(s =>
-      s.title.toLowerCase() === title.toLowerCase() &&
-      s.artist.toLowerCase() === artist.toLowerCase()
-    );
-  }, []);
-
-  // Core sync function - can be called manually or automatically
-  const performCTFileSync = useCallback(async (forceSync: boolean = false) => {
-    // Check cooldown (skip for manual sync)
-    if (!forceSync) {
+    const shouldSync = () => {
       const lastSyncStr = localStorage.getItem(LAST_SYNC_KEY);
-      if (lastSyncStr) {
-        const lastSync = new Date(lastSyncStr);
-        const elapsed = new Date().getTime() - lastSync.getTime();
-        if (elapsed < SYNC_COOLDOWN_MS) {
-          console.log(`Skipping CTFile sync (last synced: ${lastSyncStr})`);
-          return;
-        }
+      if (!lastSyncStr) return true;
+
+      const lastSync = new Date(lastSyncStr);
+      const now = new Date();
+      const elapsed = now.getTime() - lastSync.getTime();
+
+      return elapsed >= SYNC_COOLDOWN_MS;
+    };
+
+    // Helper to extract song info from filename like "歌曲名-作者.flac" (Title-Artist format)
+    // Also supports "Title - Artist.flac" format (with spaces)
+    const extractSongInfoFromFilename = (filename: string): { artist: string; title: string } | null => {
+      const cleanName = filename.replace(/\.(flac|mp3|wav|m4a|ogg|wma)$/i, '');
+
+      // Try " - " first (standard format: Title - Artist)
+      let parts = cleanName.split(' - ');
+      if (parts.length >= 2) {
+        // Format: Title - Artist
+        return { title: parts[0].trim(), artist: parts.slice(1).join(' - ').trim() };
       }
-    }
 
-    try {
-      setIsSyncing(true);
-      console.log(`Starting CTFile sync (manual: ${forceSync})...`);
+      // Try "-" without spaces (Format: Title-Artist)
+      parts = cleanName.split('-');
+      if (parts.length >= 2) {
+        // Format: Title-Artist
+        return { title: parts[0].trim(), artist: parts.slice(1).join('-').trim() };
+      }
 
-      // Get files from CTFile via Worker
-      const files = await listMusicFiles();
-      if (files.length === 0) {
-        console.log('No music files found in CTFile');
-        setIsSyncing(false);
+      return null;
+    };
+
+    // Check if song already exists in database (by title + artist match)
+    const songExistsInDB = (title: string, artist: string, existingSongs: Song[]): boolean => {
+      return existingSongs.some(s =>
+        s.title.toLowerCase() === title.toLowerCase() &&
+        s.artist.toLowerCase() === artist.toLowerCase()
+      );
+    };
+
+    const performSync = async () => {
+      // Check if we should sync
+      if (!shouldSync()) {
+        const lastSyncStr = localStorage.getItem(LAST_SYNC_KEY);
+        console.log(`Skipping CTFile sync (last synced: ${lastSyncStr})`);
         return;
       }
 
-      console.log(`Found ${files.length} files in CTFile`);
+      try {
+        setIsSyncing(true);
+        console.log('Starting CTFile sync via Worker API...');
 
-      // Get current songs snapshot
-      let currentSongs = [...songs];
+        // Get files from CTFile via Worker
+        const files = await listMusicFiles();
+        if (files.length === 0) {
+          console.log('No music files found in CTFile');
+          setIsSyncing(false);
+          return;
+        }
 
-      // Phase 1: Match files to existing songs and update audioUrl
-      let updatedCount = 0;
-      const updatedSongs = await Promise.all(
-        currentSongs.map(async (song) => {
-          // Skip if already has audio
-          if (song.audioUrl) return song;
+        console.log(`Found ${files.length} files in CTFile`);
 
-          // Find matching file
-          const matchingFile = files.find(file => {
-            const info = extractSongInfoFromFilename(file.name);
-            if (!info) return false;
-            return (
-              info.title.toLowerCase() === song.title.toLowerCase() &&
-              info.artist.toLowerCase() === song.artist.toLowerCase()
-            );
-          });
+        // Get current songs snapshot
+        let currentSongs = [...songs];
 
-          if (matchingFile) {
-            try {
-              const audioUrl = await getPlayableUrl(matchingFile.key);
-              if (audioUrl) {
-                updatedCount++;
-                console.log(`✓ Matched existing: ${song.title} - ${song.artist}`);
+        // Phase 1: Match files to existing songs and update audioUrl
+        let updatedCount = 0;
+        const updatedSongs = await Promise.all(
+          currentSongs.map(async (song) => {
+            // Skip if already has audio
+            if (song.audioUrl) return song;
 
-                // Update in database
-                await updateSongInDB(song.id, { audioUrl });
+            // Find matching file
+            const matchingFile = files.find(file => {
+              const info = extractSongInfoFromFilename(file.name);
+              if (!info) return false;
+              return (
+                info.title.toLowerCase() === song.title.toLowerCase() &&
+                info.artist.toLowerCase() === song.artist.toLowerCase()
+              );
+            });
 
-                return { ...song, audioUrl };
+            if (matchingFile) {
+              try {
+                const audioUrl = await getPlayableUrl(matchingFile.key);
+                if (audioUrl) {
+                  updatedCount++;
+                  console.log(`✓ Matched existing: ${song.title} - ${song.artist}`);
+
+                  // Update in database
+                  await updateSongInDB(song.id, { audioUrl });
+
+                  return { ...song, audioUrl };
+                }
+              } catch (error) {
+                console.error(`Failed to get URL for ${song.title}:`, error);
               }
-            } catch (error) {
-              console.error(`Failed to get URL for ${song.title}:`, error);
             }
-          }
-          return song;
-        })
-      );
+            return song;
+          })
+        );
 
-      currentSongs = updatedSongs;
+        currentSongs = updatedSongs;
 
-      // Phase 2: Import NEW songs from CTFile that don't exist in database
-      console.log('Phase 2: Checking for new songs to import...');
+        // Phase 2: Import NEW songs from CTFile that don't exist in database
+        console.log('Phase 2: Checking for new songs to import...');
 
-      // Find files that don't match any existing song
-      const newFiles = files.filter(file => {
-        const info = extractSongInfoFromFilename(file.name);
-        if (!info) return false;
-        return !songExistsInDB(info.title, info.artist, currentSongs);
-      });
+        // Find files that don't match any existing song
+        const newFiles = files.filter(file => {
+          const info = extractSongInfoFromFilename(file.name);
+          if (!info) return false;
+          return !songExistsInDB(info.title, info.artist, currentSongs);
+        });
 
-      console.log(`Found ${newFiles.length} new songs to import (max ${MAX_NEW_SONGS_PER_SYNC} per sync)`);
+        console.log(`Found ${newFiles.length} new songs to import (max ${MAX_NEW_SONGS_PER_SYNC} per sync)`);
 
-      // Process new songs (limited to prevent overload)
-      const filesToProcess = newFiles.slice(0, MAX_NEW_SONGS_PER_SYNC);
-      let importedCount = 0;
+        // Process new songs (limited to prevent overload)
+        const filesToProcess = newFiles.slice(0, MAX_NEW_SONGS_PER_SYNC);
+        let importedCount = 0;
 
-      for (const file of filesToProcess) {
-        const info = extractSongInfoFromFilename(file.name);
-        if (!info) continue;
+        for (const file of filesToProcess) {
+          const info = extractSongInfoFromFilename(file.name);
+          if (!info) continue;
 
-        try {
-          // Get playable URL first
-          const audioUrl = await getPlayableUrl(file.key);
-          if (!audioUrl) continue;
+          try {
+            // Get playable URL first
+            const audioUrl = await getPlayableUrl(file.key);
+            if (!audioUrl) continue;
 
-          // Try to enrich metadata with AI (non-blocking, use defaults if fails)
-          let metadata = await enrichSongMetadata(info.title, info.artist);
+            // Try to enrich metadata with AI (non-blocking, use defaults if fails)
+            let metadata = await enrichSongMetadata(info.title, info.artist);
 
-          if (!metadata) {
-            // Use defaults if AI enrichment fails
-            metadata = {
+            if (!metadata) {
+              // Use defaults if AI enrichment fails
+              metadata = {
+                title: info.title,
+                artist: info.artist,
+                releaseDate: new Date().toISOString().split('T')[0],
+                popularity: 50,
+                description: `由${info.artist}演唱的歌曲`,
+                coverUrl: `https://picsum.photos/seed/${info.title}_${info.artist}/300/300`
+              };
+            }
+
+            // Create new song object with proper UUID
+            const newSong: Song = {
+              id: crypto.randomUUID(),
               title: info.title,
               artist: info.artist,
-              releaseDate: new Date().toISOString().split('T')[0],
-              popularity: 50,
-              description: `由${info.artist}演唱的歌曲`,
-              coverUrl: `https://picsum.photos/seed/${info.title}_${info.artist}/300/300`
+              releaseDate: metadata.releaseDate,
+              popularity: metadata.popularity,
+              description: metadata.description,
+              coverUrl: metadata.coverUrl,
+              audioUrl: audioUrl
             };
+
+            // Save to database
+            const createdSong = await createSong(newSong);
+            currentSongs.push(createdSong);
+            importedCount++;
+
+            console.log(`✓ Imported new: ${info.title} - ${info.artist}`);
+
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 300));
+          } catch (error) {
+            console.error(`Failed to import ${info.title} - ${info.artist}:`, error);
           }
-
-          // Create new song object with proper UUID
-          const newSong: Song = {
-            id: crypto.randomUUID(),
-            title: info.title,
-            artist: info.artist,
-            releaseDate: metadata.releaseDate,
-            popularity: metadata.popularity,
-            description: metadata.description,
-            coverUrl: metadata.coverUrl,
-            audioUrl: audioUrl
-          };
-
-          // Save to database
-          const createdSong = await createSong(newSong);
-          currentSongs.push(createdSong);
-          importedCount++;
-
-          console.log(`✓ Imported new: ${info.title} - ${info.artist}`);
-
-          // Small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
-        } catch (error) {
-          console.error(`Failed to import ${info.title} - ${info.artist}:`, error);
         }
+
+        // Deduplicate and update state
+        const uniqueSongs = deduplicateSongs(currentSongs);
+        setSongs(uniqueSongs);
+
+        const now = new Date();
+        setLastSyncTime(now);
+        localStorage.setItem(LAST_SYNC_KEY, now.toISOString());
+
+        // Count matched songs (those with audioUrl)
+        const matched = uniqueSongs.filter(s => s.audioUrl).length;
+        setMatchedSongsCount(matched);
+
+        console.log(`🎵 CTFile sync complete: ${matched}/${uniqueSongs.length} songs with audio`);
+        console.log(`   - ${updatedCount} existing songs matched`);
+        console.log(`   - ${importedCount} new songs imported`);
+        if (newFiles.length > MAX_NEW_SONGS_PER_SYNC) {
+          console.log(`   - ${newFiles.length - MAX_NEW_SONGS_PER_SYNC} more songs pending (will import on next sync)`);
+        }
+      } catch (error) {
+        console.error('CTFile sync failed:', error);
+      } finally {
+        setIsSyncing(false);
       }
+    };
 
-      // Deduplicate and update state
-      const uniqueSongs = deduplicateSongs(currentSongs);
-      setSongs(uniqueSongs);
-
-      const now = new Date();
-      setLastSyncTime(now);
-      localStorage.setItem(LAST_SYNC_KEY, now.toISOString());
-
-      // Count matched songs (those with audioUrl)
-      const matched = uniqueSongs.filter(s => s.audioUrl).length;
-      setMatchedSongsCount(matched);
-
-      console.log(`🎵 CTFile sync complete: ${matched}/${uniqueSongs.length} songs with audio`);
-      console.log(`   - ${updatedCount} existing songs matched`);
-      console.log(`   - ${importedCount} new songs imported`);
-      if (newFiles.length > MAX_NEW_SONGS_PER_SYNC) {
-        console.log(`   - ${newFiles.length - MAX_NEW_SONGS_PER_SYNC} more songs pending (will import on next sync)`);
-      }
-    } catch (error) {
-      console.error('CTFile sync failed:', error);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [songs, deduplicateSongs, extractSongInfoFromFilename, songExistsInDB]);
-
-  // Manual sync handler (bypasses cooldown)
-  const handleManualSync = useCallback(() => {
-    performCTFileSync(true);
-  }, [performCTFileSync]);
-
-  // Auto-sync on data load
-  useEffect(() => {
+    // Only sync once when data is loaded
     if (isDataLoaded && songs.length > 0) {
-      performCTFileSync(false);
+      performSync();
     }
-  }, [isDataLoaded]); // Only run once when data is loaded
+  }, [isDataLoaded, songs.length, deduplicateSongs]); // Only re-run if data loaded or song count changes
 
   const currentSong = useMemo(() =>
     songs.find(s => s.id === currentlyPlayingId) || null,
@@ -541,22 +554,6 @@ const App: React.FC = () => {
           totalCount={songs.length}
         />
 
-        {/* Manual Sync Button - Top Right */}
-        <button
-          onClick={handleManualSync}
-          disabled={isSyncing}
-          className={`fixed top-6 right-6 z-50 flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border transition-all duration-300 ${isSyncing
-            ? 'bg-neon-accent/20 border-neon-accent/40 text-neon-accent cursor-not-allowed'
-            : 'bg-white/10 border-white/20 text-white hover:bg-white/20 hover:border-neon-accent/50 hover:text-neon-accent'
-            }`}
-          title="手动同步CTFile"
-        >
-          <RefreshCw size={16} className={isSyncing ? 'animate-spin' : ''} />
-          <span className="text-sm font-medium">
-            {isSyncing ? '同步中...' : '同步音乐'}
-          </span>
-        </button>
-
         {/* Dynamic Blurred Cover Background (When playing) */}
         <div
           className={`absolute inset-0 bg-cover bg-center transition-all duration-1000 blur-3xl scale-110 pointer-events-none z-0`}
@@ -572,18 +569,41 @@ const App: React.FC = () => {
         {/* Visitor Stats */}
         <VisitorStats totalVisits={visitorStats.totalVisits} activeUsers={visitorStats.activeUsers} />
 
-        {/* Main Timeline Canvas */}
-        <div className="absolute inset-0 pt-20 pb-24 z-10">
-          <Timeline
-            songs={songs}
-            currentlyPlayingId={currentlyPlayingId}
-            setCurrentlyPlayingId={setCurrentlyPlayingId}
-            searchedSongId={searchedSongId}
-          />
+        {/* Main Content - Timeline on Desktop, Song List on Mobile */}
+        <div className={`absolute inset-0 z-10 ${isMobile ? 'pt-28 pb-24 overflow-y-auto' : 'pt-20 pb-24'}`}>
+          {isMobile ? (
+            <MobileSongList
+              songs={songs}
+              currentlyPlayingId={currentlyPlayingId}
+              onSongClick={(id) => {
+                setSearchedSongId(id);
+                // If song has audio, also play it
+                const song = songs.find(s => s.id === id);
+                if (song?.audioUrl) {
+                  setCurrentlyPlayingId(id);
+                }
+              }}
+              onPlayToggle={(id) => {
+                if (currentlyPlayingId === id) {
+                  setCurrentlyPlayingId(null);
+                } else {
+                  setCurrentlyPlayingId(id);
+                }
+              }}
+              searchedSongId={searchedSongId}
+            />
+          ) : (
+            <Timeline
+              songs={songs}
+              currentlyPlayingId={currentlyPlayingId}
+              setCurrentlyPlayingId={setCurrentlyPlayingId}
+              searchedSongId={searchedSongId}
+            />
+          )}
         </div>
 
-        {/* Bottom Right Controls (Volume & Mode) - Positioned above the bottom bar */}
-        <div className="fixed bottom-24 right-6 z-50 flex flex-col gap-3">
+        {/* Bottom Right Controls (Volume & Mode) - Hidden on Mobile */}
+        <div className="hidden sm:flex fixed bottom-24 right-6 z-50 flex-col gap-3">
           {/* Play Mode Toggle */}
           <button
             onClick={togglePlayMode}
