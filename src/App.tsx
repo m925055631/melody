@@ -357,22 +357,6 @@ const App: React.FC = () => {
     setIsSearching(false);
   }, [songs]);
 
-  const handleUploadAudio = useCallback(async (songId: string, audioUrl: string) => {
-    // Update local state
-    setSongs(prevSongs => prevSongs.map(song => {
-      if (song.id === songId) {
-        return { ...song, audioUrl };
-      }
-      return song;
-    }));
-
-    // Sync to Supabase
-    try {
-      await updateSongInDB(songId, { audioUrl });
-    } catch (error) {
-      console.error('Error updating audio URL in Supabase:', error);
-    }
-  }, []);
 
 
   const handleSongEnded = useCallback(() => {
@@ -474,7 +458,6 @@ const App: React.FC = () => {
             currentlyPlayingId={currentlyPlayingId}
             setCurrentlyPlayingId={setCurrentlyPlayingId}
             searchedSongId={searchedSongId}
-            onUploadAudio={handleUploadAudio}
           />
         </div>
 

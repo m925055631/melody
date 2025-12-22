@@ -9,7 +9,6 @@ interface TimelineProps {
   currentlyPlayingId: string | null;
   setCurrentlyPlayingId: (id: string | null) => void;
   searchedSongId: string | null;
-  onUploadAudio: (songId: string, url: string) => void;
 }
 
 interface PositionedNode {
@@ -22,8 +21,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   songs,
   currentlyPlayingId,
   setCurrentlyPlayingId,
-  searchedSongId,
-  onUploadAudio
+  searchedSongId
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pixelsPerYear, setPixelsPerYear] = useState(PIXELS_PER_YEAR);
@@ -358,7 +356,6 @@ export const Timeline: React.FC<TimelineProps> = ({
               song={node.song}
               currentlyPlayingId={currentlyPlayingId}
               setCurrentlyPlayingId={setCurrentlyPlayingId}
-              onUploadAudio={onUploadAudio}
               x={node.x}
               y={node.y} // Keep original Y percentage, scaling is done via container height
               mousePos={mousePos}
