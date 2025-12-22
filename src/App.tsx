@@ -24,7 +24,7 @@ import {
   listMusicFiles,
   getPlayableUrl
 } from './services/backendProxy';
-import { Volume2, VolumeX, Shuffle, Repeat, Loader2 } from 'lucide-react';
+import { Volume2, VolumeX, Shuffle, Repeat, Repeat1, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // Start with empty, we will load from Supabase
@@ -36,7 +36,7 @@ const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
 
   const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
-  const [playMode, setPlayMode] = useState<'sequential' | 'shuffle'>('sequential');
+  const [playMode, setPlayMode] = useState<'sequential' | 'shuffle' | 'repeat-one'>('sequential');
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [matchedSongsCount, setMatchedSongsCount] = useState(0);
@@ -481,7 +481,12 @@ const App: React.FC = () => {
       return;
     }
 
-    if (playMode === 'shuffle') {
+    if (playMode === 'repeat-one') {
+      // Single repeat - replay the same song
+      // We need to trigger a re-render, so briefly set to null then back
+      setCurrentlyPlayingId(null);
+      setTimeout(() => setCurrentlyPlayingId(currentlyPlayingId), 10);
+    } else if (playMode === 'shuffle') {
       // Pick random song from playable songs
       const randomIndex = Math.floor(Math.random() * playableSongs.length);
       setCurrentlyPlayingId(playableSongs[randomIndex].id);
@@ -499,7 +504,23 @@ const App: React.FC = () => {
   }, [currentlyPlayingId, playMode, songs]);
 
   const togglePlayMode = () => {
-    setPlayMode(prev => prev === 'sequential' ? 'shuffle' : 'sequential');
+    setPlayMode(prev => {
+      if (prev === 'sequential') return 'shuffle';
+      if (prev === 'shuffle') return 'repeat-one';
+      return 'sequential';
+    });
+  };
+
+  const getPlayModeTitle = () => {
+    if (playMode === 'sequential') return '顺序播放';
+    if (playMode === 'shuffle') return '随机播放';
+    return '单曲循环';
+  };
+
+  const getPlayModeIcon = () => {
+    if (playMode === 'sequential') return <Repeat size={20} />;
+    if (playMode === 'shuffle') return <Shuffle size={20} />;
+    return <Repeat1 size={20} />;
   };
 
   const togglePlayPause = () => {
@@ -607,10 +628,10 @@ const App: React.FC = () => {
           {/* Play Mode Toggle */}
           <button
             onClick={togglePlayMode}
-            title={playMode === 'sequential' ? '顺序播放' : '随机播放'}
-            className="p-3 bg-slate-800/80 backdrop-blur text-slate-300 rounded-full hover:bg-slate-700 transition-colors shadow-lg border border-slate-700 group relative"
+            title={getPlayModeTitle()}
+            className={`p-3 bg-slate-800/80 backdrop-blur rounded-full hover:bg-slate-700 transition-colors shadow-lg border border-slate-700 group relative ${playMode === 'repeat-one' ? 'text-neon-accent' : 'text-slate-300'}`}
           >
-            {playMode === 'sequential' ? <Repeat size={20} /> : <Shuffle size={20} />}
+            {getPlayModeIcon()}
           </button>
 
           {/* Mute Toggle */}
@@ -628,6 +649,7 @@ const App: React.FC = () => {
           isPlaying={!!currentlyPlayingId}
           onPlayToggle={togglePlayPause}
           onOpenLyrics={() => setIsLyricsModalOpen(true)}
+          onNextSong={handleSongEnded}
         />
 
         {/* Audio Controller Logic (Hidden) */}

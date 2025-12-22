@@ -67,29 +67,34 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-slate-900/95 backdrop-blur-2xl transition-opacity duration-300">
-      {/* Background Ambience */}
+    <div className="fixed inset-0 z-[100] flex flex-col bg-slate-900 md:bg-slate-900/95 transition-opacity duration-300">
+      {/* Background Ambience - Optimized for mobile to prevent flickering */}
       <div
-        className="absolute inset-0 opacity-30 pointer-events-none bg-cover bg-center blur-3xl scale-125"
-        style={{ backgroundImage: `url(${song.coverUrl})` }}
+        className="absolute inset-0 opacity-30 pointer-events-none bg-cover bg-center blur-xl md:blur-3xl scale-110 md:scale-125"
+        style={{
+          backgroundImage: `url(${song.coverUrl})`,
+          transform: 'translateZ(0)',
+          willChange: 'auto',
+          backfaceVisibility: 'hidden'
+        }}
       />
 
-      {/* Header */}
-      <div className="relative z-10 flex items-center justify-between p-6">
-        <div className="flex flex-col">
-          <h2 className="text-2xl font-bold text-white tracking-tight">{song.title}</h2>
-          <p className="text-neon-accent/80 font-medium">{song.artist}</p>
+      {/* Header - Compact on mobile */}
+      <div className="relative z-10 flex items-center justify-between p-4 md:p-6">
+        <div className="flex flex-col min-w-0 flex-1 mr-3">
+          <h2 className="text-lg md:text-2xl font-bold text-white tracking-tight truncate">{song.title}</h2>
+          <p className="text-neon-accent/80 font-medium text-sm md:text-base truncate">{song.artist}</p>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {/* Re-search Button */}
           <button
             onClick={handleResearchLyrics}
             disabled={isSearching}
-            className={`p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${isSearching
-                ? 'bg-neon-accent/20 text-neon-accent'
-                : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
+            className={`p-2 md:p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${isSearching
+              ? 'bg-neon-accent/20 text-neon-accent'
+              : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
               }`}
             title="重新搜索歌词"
           >
@@ -103,9 +108,9 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
           {lyricsLines && (
             <button
               onClick={handleDownloadLyrics}
-              className={`p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${downloadState === 'success'
-                  ? 'bg-green-500/20 text-green-400 scale-105'
-                  : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
+              className={`p-2 md:p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${downloadState === 'success'
+                ? 'bg-green-500/20 text-green-400 scale-105'
+                : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
                 }`}
               title="下载歌词"
             >
@@ -126,11 +131,11 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-hidden relative z-10 flex flex-col md:flex-row items-center justify-center gap-8 p-6">
+      {/* Content - Larger lyrics area */}
+      <div className="flex-1 overflow-hidden relative z-10 flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8 px-4 md:p-6">
 
         {/* Left: Album Art (Hidden on small screens if needed, but good for aesthetics) */}
-        <div className="hidden md:block w-80 h-80 shrink-0 shadow-2xl rounded-2xl overflow-hidden border border-white/10 relative group">
+        <div className="hidden md:block w-72 lg:w-80 h-72 lg:h-80 shrink-0 shadow-2xl rounded-2xl overflow-hidden border border-white/10 relative group">
           <img src={song.coverUrl} alt="Album Art" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
           <div className="absolute bottom-4 left-4 text-white/80 text-sm">
@@ -138,11 +143,16 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
           </div>
         </div>
 
-        {/* Right: Lyrics */}
+        {/* Right: Lyrics - Expanded height for better reading */}
         <div
           ref={scrollRef}
-          className="w-full max-w-lg h-[60vh] overflow-y-auto no-scrollbar mask-image-gradient text-center space-y-6 px-4"
-          style={{ maskImage: 'linear-gradient(to bottom, transparent, black 10%, black 90%, transparent)' }}
+          className="w-full max-w-lg h-[calc(100vh-140px)] md:h-[75vh] overflow-y-auto no-scrollbar text-center space-y-5 md:space-y-6 px-4"
+          style={{
+            maskImage: 'linear-gradient(to bottom, transparent, black 8%, black 92%, transparent)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 8%, black 92%, transparent)',
+            transform: 'translateZ(0)',
+            willChange: 'scroll-position'
+          }}
         >
           {!lyricsLines ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">

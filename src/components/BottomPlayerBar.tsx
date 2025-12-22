@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Pause, ChevronUp, Download, Check, Loader2 } from 'lucide-react';
+import { Play, Pause, ChevronUp, Download, Check, Loader2, SkipForward } from 'lucide-react';
 import type { Song } from '../types';
 
 interface BottomPlayerBarProps {
@@ -7,13 +7,15 @@ interface BottomPlayerBarProps {
   isPlaying: boolean;
   onPlayToggle: () => void;
   onOpenLyrics: () => void;
+  onNextSong?: () => void;
 }
 
 export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
   currentSong,
   isPlaying,
   onPlayToggle,
-  onOpenLyrics
+  onOpenLyrics,
+  onNextSong
 }) => {
   const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'success'>('idle');
 
@@ -102,7 +104,7 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
         </div>
 
         {/* Right: Controls */}
-        <div className="flex items-center gap-3 pr-2">
+        <div className="flex items-center gap-2 sm:gap-3 pr-2">
           {/* Download Button - Only show if song has audio */}
           {currentSong.audioUrl && (
             <button
@@ -135,6 +137,20 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
           >
             {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
           </button>
+
+          {/* Next Song Button */}
+          {onNextSong && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onNextSong();
+              }}
+              className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-neon-accent flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+              title="下一首"
+            >
+              <SkipForward size={18} fill="currentColor" />
+            </button>
+          )}
         </div>
       </div>
     </div>
