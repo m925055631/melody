@@ -12,6 +12,7 @@ interface TimelineNodeProps {
   mousePos: { x: number, y: number } | null;
   containerHeight: number;
   isSearched: boolean;
+  zoomLevel: number;  // Unified zoom level for title visibility
 }
 
 export const TimelineNode: React.FC<TimelineNodeProps> = ({
@@ -22,7 +23,8 @@ export const TimelineNode: React.FC<TimelineNodeProps> = ({
   y,
   mousePos,
   containerHeight,
-  isSearched
+  isSearched,
+  zoomLevel
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -128,14 +130,18 @@ export const TimelineNode: React.FC<TimelineNodeProps> = ({
     >
       {/* The Visual Node (Dot & Line) */}
       <div className="flex flex-col items-center cursor-pointer group">
-        {/* Title (Small, initially visible) - Hide if card is open to avoid clutter */}
+        {/* Title - Hidden by default, shows when zoomed in enough (zoomLevel > 2) */}
+        {/* Calculate title opacity based on zoom level: 0 below 2x, gradually increase to full at 3x */}
         <span
           className={`
             mb-3 text-sm font-medium tracking-wide whitespace-nowrap 
             transition-all duration-300 select-none pointer-events-none drop-shadow-lg
-            ${isHovered ? 'opacity-0 -translate-y-2' : 'opacity-95 text-white'}
-            ${isPlaying ? 'text-cyan-300 opacity-100 font-bold' : ''}
+            ${isHovered ? 'opacity-0 -translate-y-2' : ''}
+            ${isPlaying && !isHovered ? 'text-cyan-300 font-bold' : 'text-white'}
           `}
+          style={{
+            opacity: isHovered ? 0 : (zoomLevel > 2 ? Math.min(0.95, (zoomLevel - 2) / 1.5) : 0)
+          }}
         >
           {song.title}
         </span>

@@ -1,8 +1,13 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import type { Song } from '../types';
 import { TimelineNode } from './TimelineNode';
-import { getYearsWithSongs, PIXELS_PER_YEAR, MIN_PIXELS_PER_YEAR, MAX_PIXELS_PER_YEAR, TIMELINE_PADDING, START_YEAR } from '../constants';
+import { getYearsWithSongs, PIXELS_PER_YEAR, TIMELINE_PADDING } from '../constants';
 import { Plus, Minus } from 'lucide-react';
+
+// Unified zoom constants
+const MIN_SCALE = 0.3;
+const MAX_SCALE = 10.0;
+const DEFAULT_SCALE = 1.0;
 
 interface TimelineProps {
   songs: Song[];
@@ -24,8 +29,18 @@ export const Timeline: React.FC<TimelineProps> = ({
   searchedSongId
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [pixelsPerYear, setPixelsPerYear] = useState(PIXELS_PER_YEAR);
-  const [yAxisScale, setYAxisScale] = useState(1); // Y-axis zoom scale (1 = normal)
+  // Unified scale factor (Excalidraw style) - affects both X and Y uniformly
+  const [scale, setScale] = useState(DEFAULT_SCALE);
+
+  // Compute dynamic start year based on earliest song
+  const dynamicStartYear = useMemo(() => {
+    if (songs.length === 0) return 2000;
+    const earliestDate = songs.reduce((min, song) => {
+      const date = new Date(song.releaseDate);
+      return date < min ? date : min;
+    }, new Date(songs[0].releaseDate));
+    return earliestDate.getFullYear();
+  }, [songs]);
 
   // Generate years dynamically based on songs
   const YEARS = useMemo(() => {
@@ -33,10 +48,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     console.log('[Timeline Debug] Years:', {
       songsCount: songs.length,
       yearsCount: years.length,
+      dynamicStartYear,
       sampleYears: years.slice(0, 5)
     });
     return years;
-  }, [songs]);
+  }, [songs, dynamicStartYear]);
 
   // Dragging state (supports both horizontal and vertical)
   const [isDragging, setIsDragging] = useState(false);
@@ -68,15 +84,16 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     // Calculate cumulative X offsets based on density
     // Each month gets a base width, plus extra width proportional to density
-    const BASE_MONTH_WIDTH = pixelsPerYear / 12;
-    const DENSITY_MULTIPLIER = 10; // Extra pixels per song in dense months
+    // Apply scale to base width for unified zoom
+    const BASE_MONTH_WIDTH = (PIXELS_PER_YEAR * scale) / 12;
+    const DENSITY_MULTIPLIER = 10 * scale; // Extra pixels per song in dense months
 
     const xOffsets = new Map<string, { start: number; width: number }>();
-    let currentX = TIMELINE_PADDING;
+    let currentX = TIMELINE_PADDING * scale;
 
-    // Create offset for all months from START_YEAR to END_YEAR
+    // Create offset for all months from dynamicStartYear to END_YEAR
     const END_YEAR = new Date().getFullYear();
-    for (let year = START_YEAR; year <= END_YEAR; year++) {
+    for (let year = dynamicStartYear; year <= END_YEAR; year++) {
       for (let month = 1; month <= 12; month++) {
         const key = `${year}-${String(month).padStart(2, '0')}`;
         const count = densityMap.get(key) || 0;
@@ -88,10 +105,10 @@ export const Timeline: React.FC<TimelineProps> = ({
           extraWidth += (Math.min(count, 20) - 3) * DENSITY_MULTIPLIER; // Tier 1: 4-20 songs
         }
         if (count > 10) {
-          extraWidth += (count - 10) * 40; // Tier 2: 21+ songs get extra 20px each
+          extraWidth += (count - 10) * 40 * scale; // Tier 2: 21+ songs get extra 20px each
         }
         if (count > 20) {
-          extraWidth += (count - 20) * 80;
+          extraWidth += (count - 20) * 80 * scale;
         }
         const width = BASE_MONTH_WIDTH + extraWidth;
 
@@ -100,8 +117,8 @@ export const Timeline: React.FC<TimelineProps> = ({
       }
     }
 
-    return { densityMap, xOffsets, totalWidth: currentX + TIMELINE_PADDING };
-  }, [songs, pixelsPerYear]);
+    return { densityMap, xOffsets, totalWidth: currentX + TIMELINE_PADDING * scale };
+  }, [songs, scale, dynamicStartYear]);
 
   const layout = useMemo(() => {
     const { densityMap, xOffsets } = monthDensityData;
@@ -229,9 +246,9 @@ export const Timeline: React.FC<TimelineProps> = ({
         const halfScreenX = window.innerWidth / 2;
         const targetScrollX = targetNode.x - halfScreenX;
 
-        // Center vertically - account for Y-axis scaling
+        // Center vertically - account for unified scaling
         const containerHeight = container.clientHeight;
-        const scaledContentHeight = containerHeight * yAxisScale;
+        const scaledContentHeight = containerHeight * scale;
         const halfScreenY = containerHeight / 2;
 
         // Convert percentage Y (0-100) to actual pixel position
@@ -245,37 +262,56 @@ export const Timeline: React.FC<TimelineProps> = ({
         });
       }
     }
-  }, [searchedSongId, layout, yAxisScale]); // Re-run if ID changes, Layout changes, or Y scale changes
+  }, [searchedSongId, layout, scale]); // Re-run if ID changes, Layout changes, or scale changes
 
   // ---------------------------------------------------------------------------
-  // Zoom Logic: Command+Scroll for horizontal, Shift+Scroll for vertical, Scroll for page scroll
+  // Unified Zoom Logic (Excalidraw style): Ctrl+Scroll = zoom centered on mouse
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
-      e.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
 
-      // Command/Ctrl + Scroll = Horizontal timeline zoom
+      // Command/Ctrl + Scroll = Unified zoom centered on mouse position
       if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+
+        const rect = container.getBoundingClientRect();
+
+        // Mouse position relative to container viewport
+        const mouseViewportX = e.clientX - rect.left;
+        const mouseViewportY = e.clientY - rect.top;
+
+        // Mouse position in content coordinates (accounting for scroll)
+        const mouseContentX = mouseViewportX + container.scrollLeft;
+        const mouseContentY = mouseViewportY + container.scrollTop;
+
+        // Calculate new scale
         const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-        setPixelsPerYear(p => Math.min(MAX_PIXELS_PER_YEAR, Math.max(MIN_PIXELS_PER_YEAR, p * zoomFactor)));
-      }
-      // Shift + Scroll = Vertical (Y-axis) zoom
-      // Note: Some browsers convert Shift+Scroll's deltaY to deltaX
-      else if (e.shiftKey) {
-        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-        const zoomFactor = delta > 0 ? 0.9 : 1.1;
-        setYAxisScale(s => {
-          const newScale = Math.min(3, Math.max(0.5, s * zoomFactor));
-          //console.log('[Y-Axis Zoom]', { deltaX: e.deltaX, deltaY: e.deltaY, delta, zoomFactor, oldScale: s, newScale });
-          return newScale;
-        });
-      }
-      // Regular Scroll = Vertical scroll (default browser behavior)
-      else {
-        const container = containerRef.current;
-        if (container) {
-          container.scrollTop += e.deltaY;
+        const oldScale = scale;
+        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, oldScale * zoomFactor));
+
+        if (newScale !== oldScale) {
+          // Calculate the scale ratio
+          const scaleRatio = newScale / oldScale;
+
+          // Calculate new scroll positions to keep mouse position fixed
+          const newScrollLeft = mouseContentX * scaleRatio - mouseViewportX;
+          const newScrollTop = mouseContentY * scaleRatio - mouseViewportY;
+
+          // Apply new scale and scroll
+          setScale(newScale);
+
+          // Use requestAnimationFrame to ensure scroll happens after state update
+          requestAnimationFrame(() => {
+            container.scrollLeft = Math.max(0, newScrollLeft);
+            container.scrollTop = Math.max(0, newScrollTop);
+          });
         }
+      }
+      // Regular Scroll = Normal scroll behavior (horizontal + vertical)
+      else {
+        // Allow natural scrolling
       }
     };
 
@@ -289,22 +325,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         container.removeEventListener('wheel', handleWheel);
       }
     };
-  }, []);
-
-  // Preserve scroll center on zoom
-  const prevPixelsPerYear = useRef(pixelsPerYear);
-  useEffect(() => {
-    if (containerRef.current && prevPixelsPerYear.current !== pixelsPerYear) {
-      const container = containerRef.current;
-      const centerRatio = (container.scrollLeft + container.clientWidth / 2) / ((YEARS.length * prevPixelsPerYear.current) + TIMELINE_PADDING * 2);
-
-      const newTotalWidth = (YEARS.length * pixelsPerYear) + TIMELINE_PADDING * 2;
-      const newScrollLeft = (centerRatio * newTotalWidth) - (container.clientWidth / 2);
-
-      container.scrollLeft = newScrollLeft;
-      prevPixelsPerYear.current = pixelsPerYear;
-    }
-  }, [pixelsPerYear]);
+  }, [scale]);
 
 
   // ---------------------------------------------------------------------------
@@ -351,8 +372,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     return monthDensityData.totalWidth;
   }, [monthDensityData]);
 
-  const handleZoomIn = () => setPixelsPerYear(p => Math.min(MAX_PIXELS_PER_YEAR, p + 200));
-  const handleZoomOut = () => setPixelsPerYear(p => Math.max(MIN_PIXELS_PER_YEAR, p - 200));
+  const handleZoomIn = () => setScale(s => Math.min(MAX_SCALE, s * 1.2));
+  const handleZoomOut = () => setScale(s => Math.max(MIN_SCALE, s / 1.2));
 
   return (
     <>
@@ -369,7 +390,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           className="absolute top-0 left-0 pointer-events-none"
           style={{
             width: `${totalWidth}px`,
-            height: `${100 * yAxisScale}%`,
+            height: `${100 * scale}%`,
             minHeight: '100%'
           }}
         >
@@ -404,7 +425,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           })}
 
           {/* Month Markers (shown when zoomed in) */}
-          {pixelsPerYear > 600 && YEARS.map((yearMarker) => {
+          {scale > 1.5 && YEARS.map((yearMarker) => {
             const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
             return monthNames.map((month) => {
               const monthKey = `${yearMarker.year}-${month}`;
@@ -435,7 +456,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           className="relative"
           style={{
             width: `${totalWidth}px`,
-            height: `${100 * yAxisScale}%`,
+            height: `${100 * scale}%`,
             minHeight: '100%'
           }}
         >
@@ -448,8 +469,9 @@ export const Timeline: React.FC<TimelineProps> = ({
               x={node.x}
               y={node.y} // Keep original Y percentage, scaling is done via container height
               mousePos={mousePos}
-              containerHeight={(containerRef.current?.clientHeight || 0) * yAxisScale}
+              containerHeight={(containerRef.current?.clientHeight || 0) * scale}
               isSearched={node.song.id === searchedSongId}
+              zoomLevel={scale}
             />
           ))}
         </div>
@@ -469,9 +491,14 @@ export const Timeline: React.FC<TimelineProps> = ({
           <div
             className="absolute bottom-0 left-0 w-full bg-neon-accent/50 transition-all duration-300"
             style={{
-              height: `${((pixelsPerYear - MIN_PIXELS_PER_YEAR) / (MAX_PIXELS_PER_YEAR - MIN_PIXELS_PER_YEAR)) * 100}%`
+              height: `${((scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE)) * 100}%`
             }}
           />
+        </div>
+
+        {/* Scale indicator */}
+        <div className="text-[10px] text-slate-400 font-mono">
+          {Math.round(scale * 100)}%
         </div>
 
         <button
@@ -491,11 +518,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                 <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px]">
                   {navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'}
                 </kbd>
-                <span>+ 滚轮 → 时间轴缩放</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px]">⇧</kbd>
-                <span>+ 滚轮 → Y轴缩放</span>
+                <span>+ 滚轮 → 缩放 (以鼠标为中心)</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-5 text-center">🖱️</span>
