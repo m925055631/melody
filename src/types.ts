@@ -9,6 +9,8 @@ export interface Song {
   description?: string;
   audioUrl?: string; // URL for the audio file (uploaded by user)
   lyrics?: string; // Lyrics content
+  fileId?: string; // CTFile file ID (without 'f' prefix)
+  audioUrlUpdatedAt?: string; // ISO timestamp of when audioUrl was last updated
 }
 
 export interface YearMarker {

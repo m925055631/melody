@@ -304,6 +304,32 @@ async function handleGetPlayableUrl(env: Env, fileKey: string) {
     return data.download_url || null;
 }
 
+// Refresh an expired audio URL and update the database
+async function handleRefreshAudioUrl(env: Env, songId: string, fileId: string) {
+    // Get new download URL from CTFile
+    const newAudioUrl = await handleGetPlayableUrl(env, fileId);
+
+    if (!newAudioUrl) {
+        throw new Error("Failed to get new audio URL from CTFile");
+    }
+
+    const now = new Date().toISOString();
+
+    // Update the song in Supabase with new URL and timestamp
+    await callSupabase(env, `songs?id=eq.${songId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+            audio_url: newAudioUrl,
+            audio_url_updated_at: now
+        })
+    });
+
+    return {
+        audioUrl: newAudioUrl,
+        audioUrlUpdatedAt: now
+    };
+}
+
 // ============================================================================
 // Cloudflare Pages Functions Handler
 // ============================================================================
@@ -365,6 +391,11 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
             case "getPlayableUrl":
                 result = await handleGetPlayableUrl(env, data.fileKey);
+                break;
+
+            // Refresh expired audio URL
+            case "refreshAudioUrl":
+                result = await handleRefreshAudioUrl(env, data.songId, data.fileId);
                 break;
 
             // Visitor Statistics Operations

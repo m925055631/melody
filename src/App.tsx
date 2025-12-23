@@ -23,7 +23,8 @@ import {
   trackVisit,
   getVisitorStats,
   listMusicFiles,
-  getPlayableUrl
+  getPlayableUrl,
+  refreshAudioUrl
 } from './services/backendProxy';
 import { Volume2, VolumeX, Shuffle, Repeat, Repeat1, Loader2 } from 'lucide-react';
 
@@ -268,10 +269,16 @@ const App: React.FC = () => {
                   updatedCount++;
                   console.log(`✓ Matched existing: ${song.title} - ${song.artist}`);
 
-                  // Update in database
-                  await updateSongInDB(song.id, { audioUrl });
+                  // Extract fileId from key (remove 'f' prefix if present)
+                  const fileId = matchingFile.key.startsWith('f')
+                    ? matchingFile.key.slice(1)
+                    : matchingFile.key;
+                  const audioUrlUpdatedAt = new Date().toISOString();
 
-                  return { ...song, audioUrl };
+                  // Update in database with fileId and timestamp
+                  await updateSongInDB(song.id, { audioUrl, fileId, audioUrlUpdatedAt });
+
+                  return { ...song, audioUrl, fileId, audioUrlUpdatedAt };
                 }
               } catch (error) {
                 console.error(`Failed to get URL for ${song.title}:`, error);
@@ -533,12 +540,62 @@ const App: React.FC = () => {
     return <Repeat1 size={20} />;
   };
 
+  // Check if audio URL is expired (>20 hours old)
+  const isAudioUrlExpired = (song: Song): boolean => {
+    if (!song.audioUrlUpdatedAt) return true; // No timestamp = expired
+    const updatedTime = new Date(song.audioUrlUpdatedAt).getTime();
+    const now = Date.now();
+    const TWENTY_HOURS_MS = 20 * 60 * 60 * 1000;
+    return (now - updatedTime) > TWENTY_HOURS_MS;
+  };
+
+  // Smart play handler: checks URL expiry and refreshes if needed
+  const handlePlaySong = useCallback(async (songId: string) => {
+    const song = songs.find(s => s.id === songId);
+    if (!song) return;
+
+    // If no fileId, can't refresh - just play with existing URL
+    if (!song.fileId || !song.audioUrl) {
+      setCurrentlyPlayingId(songId);
+      return;
+    }
+
+    // Check if URL is expired
+    if (isAudioUrlExpired(song)) {
+      console.log(`Audio URL expired for "${song.title}", refreshing...`);
+
+      try {
+        const result = await refreshAudioUrl(song.id, song.fileId);
+
+        if (result) {
+          console.log(`✓ Refreshed audio URL for "${song.title}"`);
+
+          // Update local song state with new URL
+          setSongs(prev => prev.map(s =>
+            s.id === songId
+              ? { ...s, audioUrl: result.audioUrl, audioUrlUpdatedAt: result.audioUrlUpdatedAt }
+              : s
+          ));
+        }
+      } catch (error) {
+        console.error(`Failed to refresh URL for "${song.title}":`, error);
+        // Continue anyway - maybe old URL still works
+      }
+    }
+
+    // Play the song
+    setCurrentlyPlayingId(songId);
+  }, [songs]);
+
   const togglePlayPause = () => {
     if (currentlyPlayingId) {
       setCurrentlyPlayingId(null);
     } else if (songs.length > 0) {
-      // Resume last played or start first
-      setCurrentlyPlayingId(songs[0].id);
+      // Resume last played or start first playable song
+      const playableSong = songs.find(s => s.audioUrl);
+      if (playableSong) {
+        handlePlaySong(playableSong.id);
+      }
     }
   };
 
@@ -627,7 +684,7 @@ const App: React.FC = () => {
             <Timeline
               songs={songs}
               currentlyPlayingId={currentlyPlayingId}
-              setCurrentlyPlayingId={setCurrentlyPlayingId}
+              onPlayToggle={handlePlaySong}
               searchedSongId={searchedSongId}
             />
           )}

@@ -173,11 +173,11 @@ export function getYearsWithSongs(songs: Song[]): YearMarker[] {
     );
   }
 
-  // Extract years from songs
+  // Extract years from songs - no year range restriction
   const yearsWithSongs = new Set<number>();
   songs.forEach(song => {
     const year = new Date(song.releaseDate).getFullYear();
-    if (year >= START_YEAR && year <= END_YEAR) {
+    if (year <= END_YEAR) {  // Only filter by end year (current year)
       yearsWithSongs.add(year);
     }
   });

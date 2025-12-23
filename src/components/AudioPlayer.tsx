@@ -37,11 +37,19 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     useEffect(() => {
       if (audioRef.current) {
         if (isPlaying) {
+          if (!audioSrc || audioSrc === DEFAULT_AUDIO_URL) {
+            console.log("Audio source is invalid or default, skipping play");
+            return;
+          }
           // Reset play logic when source changes if needed, but HTML audio handles src change well usually
           const playPromise = audioRef.current.play();
           if (playPromise !== undefined) {
             playPromise.catch(error => {
-              console.log("Autoplay prevented or interrupted:", error);
+              if (error.name === 'NotAllowedError') {
+                console.warn("Autoplay prevented: User interaction required");
+              } else {
+                console.error("Playback failed:", error);
+              }
             });
           }
         } else {

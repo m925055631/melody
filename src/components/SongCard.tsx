@@ -58,25 +58,26 @@ export const SongCard: React.FC<SongCardProps> = ({
   };
 
   // Dynamic styles for the card expansion effect
+  // Card positioned closer to dot with padding for smooth hover transition
   const containerClasses = `
     absolute left-1/2 -translate-x-1/2 
-    transition-all duration-700 ease-out
+    transition-all duration-300 ease-out
     flex flex-col items-center
-    ${isUp ? 'bottom-8 origin-bottom' : 'top-8 origin-top'}
+    ${isUp ? 'bottom-2 origin-bottom pb-2' : 'top-2 origin-top pt-2'}
     ${isHovered ? 'w-60 h-auto scale-100 opacity-100 pointer-events-auto' : 'w-0 h-0 scale-0 opacity-0 pointer-events-none'}
   `;
 
-  // Triangle styles
-  const triangleUpStyle = "w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-b-[8px] border-b-slate-900/80 translate-y-[1px]";
-  const triangleDownStyle = "w-0 h-0 border-l-[8px] border-l-transparent border-r-[8px] border-r-transparent border-t-[8px] border-t-slate-900/80 translate-y-[-1px]";
+  // Triangle styles - adjusted for closer positioning
+  const triangleUpStyle = "w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[6px] border-b-slate-900/95 translate-y-[1px]";
+  const triangleDownStyle = "w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[6px] border-t-slate-900/95 translate-y-[-1px]";
 
   return (
     <div className={containerClasses}>
       {/* If pointing DOWN (card is below), Triangle comes first */}
       {!isUp && <div className={triangleUpStyle}></div>}
 
-      {/* The Glassmorphism Card */}
-      <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-700/50 rounded-xl overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.5)] w-full p-3 flex flex-col gap-2 relative">
+      {/* The Card - Simplified for performance */}
+      <div className="bg-slate-900/95 border border-slate-700/50 rounded-xl overflow-hidden shadow-lg w-full p-3 flex flex-col gap-2 relative">
 
         {/* Album Art with Play Button Overlay - Reduced height from aspect-square to h-32 */}
         <div className="relative group w-full h-32 rounded-lg overflow-hidden bg-slate-800 shadow-inner shrink-0">
@@ -96,7 +97,7 @@ export const SongCard: React.FC<SongCardProps> = ({
                 e.stopPropagation();
                 onPlayToggle();
               }}
-              className="w-12 h-12 rounded-full bg-neon-accent/90 hover:bg-neon-accent text-white flex items-center justify-center transform hover:scale-110 transition-all shadow-[0_0_20px_rgba(56,189,248,0.5)] backdrop-blur-sm"
+              className="w-12 h-12 rounded-full bg-neon-accent/90 hover:bg-neon-accent text-white flex items-center justify-center transform hover:scale-110 transition-all shadow-lg"
             >
               {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
             </button>
@@ -109,7 +110,7 @@ export const SongCard: React.FC<SongCardProps> = ({
                 onClick={handleDownload}
                 title={isDownloading ? "下载中..." : "下载歌曲"}
                 disabled={isDownloading}
-                className="p-1.5 bg-black/40 hover:bg-black/60 backdrop-blur-md rounded-full text-white transition-colors border border-white/20 relative disabled:opacity-75 disabled:cursor-wait"
+                className="p-1.5 bg-black/60 hover:bg-black/80 rounded-full text-white transition-colors border border-white/20 relative disabled:opacity-75 disabled:cursor-wait"
               >
                 {isDownloading ? (
                   <div className="w-[14px] h-[14px] relative">

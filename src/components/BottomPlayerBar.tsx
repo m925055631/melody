@@ -35,17 +35,18 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const progressRef = useRef<HTMLDivElement>(null);
 
-  if (!currentSong) return null;
-
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-
-  // Calculate time position from mouse/touch event
+  // Calculate time position from mouse/touch event - MUST be before any early returns
   const calculateSeekTime = useCallback((clientX: number): number => {
     if (!progressRef.current || !duration) return 0;
     const rect = progressRef.current.getBoundingClientRect();
     const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
     return percent * duration;
   }, [duration]);
+
+  // Early return AFTER all hooks
+  if (!currentSong) return null;
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   // Handle click on progress bar
   const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {

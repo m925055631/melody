@@ -137,6 +137,8 @@ interface SongRecord {
     description?: string;
     audio_url?: string;
     lyrics?: string;
+    file_id?: string;
+    audio_url_updated_at?: string;
     created_at?: string;
     updated_at?: string;
 }
@@ -151,7 +153,9 @@ function recordToSong(record: SongRecord): Song {
         coverUrl: record.cover_url,
         description: record.description,
         audioUrl: record.audio_url,
-        lyrics: record.lyrics
+        lyrics: record.lyrics,
+        fileId: record.file_id,
+        audioUrlUpdatedAt: record.audio_url_updated_at
     };
 }
 
@@ -167,6 +171,8 @@ function songToRecord(song: Partial<Song>): Partial<SongRecord> {
     if (song.description !== undefined) record.description = song.description;
     if (song.audioUrl !== undefined) record.audio_url = song.audioUrl;
     if (song.lyrics !== undefined) record.lyrics = song.lyrics;
+    if (song.fileId !== undefined) record.file_id = song.fileId;
+    if (song.audioUrlUpdatedAt !== undefined) record.audio_url_updated_at = song.audioUrlUpdatedAt;
 
     return record;
 }
@@ -223,6 +229,17 @@ export async function getPlayableUrl(fileKey: string): Promise<string | null> {
         return await callWorkerAPI("getPlayableUrl", { fileKey });
     } catch (error) {
         console.error(`Failed to get playable URL for ${fileKey}:`, error);
+        return null;
+    }
+}
+
+// Refresh an expired audio URL and update both database and local song
+export async function refreshAudioUrl(songId: string, fileId: string): Promise<{ audioUrl: string; audioUrlUpdatedAt: string } | null> {
+    try {
+        const result = await callWorkerAPI("refreshAudioUrl", { songId, fileId });
+        return result;
+    } catch (error) {
+        console.error(`Failed to refresh audio URL for song ${songId}:`, error);
         return null;
     }
 }
