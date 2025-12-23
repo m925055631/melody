@@ -1,8 +1,9 @@
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Timeline } from './components/Timeline';
 import { SearchBar } from './components/SearchBar';
 import { AudioPlayer } from './components/AudioPlayer';
+import type { AudioPlayerHandle } from './components/AudioPlayer';
 
 import { BottomPlayerBar } from './components/BottomPlayerBar';
 import { LyricsModal } from './components/LyricsModal';
@@ -34,6 +35,9 @@ const App: React.FC = () => {
   const [searchedSongId, setSearchedSongId] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const audioRef = useRef<AudioPlayerHandle>(null);
 
   const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
   const [playMode, setPlayMode] = useState<'sequential' | 'shuffle' | 'repeat-one'>('sequential');
@@ -381,6 +385,12 @@ const App: React.FC = () => {
     [songs, currentlyPlayingId]
   );
 
+  // Reset progress when song changes
+  useEffect(() => {
+    setCurrentTime(0);
+    setDuration(0);
+  }, [currentlyPlayingId]);
+
   // AI Fetch Effect for Lyrics & Better Cover
   useEffect(() => {
     const fetchMissingDetails = async () => {
@@ -650,14 +660,22 @@ const App: React.FC = () => {
           onPlayToggle={togglePlayPause}
           onOpenLyrics={() => setIsLyricsModalOpen(true)}
           onNextSong={handleSongEnded}
+          currentTime={currentTime}
+          duration={duration}
+          onSeek={(time) => audioRef.current?.seek(time)}
         />
 
         {/* Audio Controller Logic (Hidden) */}
         <AudioPlayer
+          ref={audioRef}
           isPlaying={!!currentlyPlayingId}
           volume={isMuted ? 0 : 0.5}
           src={currentSong?.audioUrl}
           onEnded={handleSongEnded}
+          onTimeUpdate={(time, dur) => {
+            setCurrentTime(time);
+            setDuration(dur);
+          }}
         />
 
         {/* Modals */}
