@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=5174",
+    "dev": "vite --port=5173",
     "dev:api": "wrangler pages dev functions/api --port=8787",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

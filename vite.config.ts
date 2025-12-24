@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       'process.env.API_KEY': JSON.stringify(env.API_KEY),
     },
     server: {
-      port: 5174,
+      port: 5173,
       proxy: {
         '/api': {
           target: 'http://localhost:8787',

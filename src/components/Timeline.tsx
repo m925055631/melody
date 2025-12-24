@@ -229,33 +229,40 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Auto-Scroll to Searched Song
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (searchedSongId && containerRef.current) {
-      // Find the ACTUAL calculated position of the song from layout
-      const targetNode = layout.find(n => n.song.id === searchedSongId);
+    if (searchedSongId) {
+      console.log('[Timeline Auto-Scroll] Triggered for:', searchedSongId);
+      if (containerRef.current) {
+        // Find the ACTUAL calculated position of the song from layout
+        const targetNode = layout.find(n => n.song.id === searchedSongId);
 
-      if (targetNode) {
-        const container = containerRef.current;
+        console.log('[Timeline Auto-Scroll] Target node found:', !!targetNode, targetNode);
 
-        // Center horizontally
-        const halfScreenX = window.innerWidth / 2;
-        const targetScrollX = targetNode.x - halfScreenX;
+        if (targetNode) {
+          const container = containerRef.current;
 
-        // Center vertically - account for Y-axis scaling
-        const containerHeight = container.clientHeight;
-        const scaledContentHeight = containerHeight * yAxisScale;
-        const halfScreenY = containerHeight / 2;
+          // Center horizontally
+          const halfScreenX = window.innerWidth / 2;
+          const targetScrollX = targetNode.x - halfScreenX;
 
-        // Node is positioned from bottom (bottom: y%)
-        // Convert to top position: (100 - y)% from top
-        const topPercent = 100 - targetNode.y;
-        const actualY = (topPercent / 100) * scaledContentHeight;
-        const targetScrollY = actualY - halfScreenY;
+          // Center vertically - account for Y-axis scaling
+          const containerHeight = container.clientHeight;
+          const scaledContentHeight = containerHeight * yAxisScale;
+          const halfScreenY = containerHeight / 2;
 
-        container.scrollTo({
-          left: Math.max(0, targetScrollX),
-          top: Math.max(0, targetScrollY),
-          behavior: 'smooth'
-        });
+          // Node is positioned from bottom (bottom: y%)
+          // Convert to top position: (100 - y)% from top
+          const topPercent = 100 - targetNode.y;
+          const actualY = (topPercent / 100) * scaledContentHeight;
+          const targetScrollY = actualY - halfScreenY;
+
+          console.log('[Timeline Auto-Scroll] Scrolling to:', { x: targetScrollX, y: targetScrollY });
+
+          container.scrollTo({
+            left: Math.max(0, targetScrollX),
+            top: Math.max(0, targetScrollY),
+            behavior: 'smooth'
+          });
+        }
       }
     }
   }, [searchedSongId, layout, yAxisScale]); // Re-run if ID changes, Layout changes, or Y scale changes

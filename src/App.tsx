@@ -22,9 +22,11 @@ import {
   trackVisit,
   getVisitorStats,
   listMusicFiles,
-  getPlayableUrl
+  getPlayableUrl,
+  isAudioUrlExpired
 } from './services/backendProxy';
-import { Volume2, VolumeX, Shuffle, Repeat, Loader2 } from 'lucide-react';
+import { ctfileRateLimiter } from './utils/rateLimiter';
+import { Volume2, VolumeX, Shuffle, Repeat, Repeat1, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // All songs from database
@@ -38,7 +40,7 @@ const App: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
 
   const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
-  const [playMode, setPlayMode] = useState<'sequential' | 'shuffle'>('sequential');
+  const [playMode, setPlayMode] = useState<'sequential' | 'shuffle' | 'single'>('sequential');
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [matchedSongsCount, setMatchedSongsCount] = useState(0);
@@ -56,7 +58,9 @@ const App: React.FC = () => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Deduplicate songs by title + artist (keep the first occurrence with audioUrl if possible)
+  // Deduplicate songs by title + artist
+  // Priority: 1) Keep version with audioUrl if only one has it
+  //           2) If both have audioUrl, keep the one with latest audioUrlUpdatedAt
   const deduplicateSongs = useCallback((songs: Song[]): Song[] => {
     const seen = new Map<string, Song>();
 
@@ -68,10 +72,19 @@ const App: React.FC = () => {
         // First time seeing this song
         seen.set(key, song);
       } else if (song.audioUrl && !existing.audioUrl) {
-        // Replace with version that has audio
+        // Current song has audio, existing doesn't - use current
         seen.set(key, song);
+      } else if (!song.audioUrl && existing.audioUrl) {
+        // Existing has audio, current doesn't - keep existing (do nothing)
+      } else if (song.audioUrl && existing.audioUrl) {
+        // Both have audioUrl - compare audioUrlUpdatedAt, keep newer
+        const existingTime = new Date(existing.audioUrlUpdatedAt || '1970-01-01').getTime();
+        const songTime = new Date(song.audioUrlUpdatedAt || '1970-01-01').getTime();
+        if (songTime > existingTime) {
+          seen.set(key, song);
+        }
       }
-      // Otherwise keep the existing one
+      // If neither has audioUrl, keep existing (first occurrence)
     });
 
     return Array.from(seen.values()).sort((a, b) =>
@@ -221,6 +234,13 @@ const App: React.FC = () => {
       const lastSyncStr = localStorage.getItem(LAST_SYNC_KEY);
       if (!lastSyncStr) return true;
 
+      // Force sync if any song has audioUrl but missing fileId (repair needed)
+      const needsRepair = songs.some(s => s.audioUrl && !s.fileId);
+      if (needsRepair) {
+        console.log('Force sync triggered: some songs are missing fileId');
+        return true;
+      }
+
       const lastSync = new Date(lastSyncStr);
       const now = new Date();
       const elapsed = now.getTime() - lastSync.getTime();
@@ -284,41 +304,61 @@ const App: React.FC = () => {
         let currentSongs = [...songs];
 
         // Phase 1: Match files to existing songs and update audioUrl
+        // Limit to MAX_NEW_SONGS_PER_SYNC (50) API calls per sync to avoid rate limiting
         let updatedCount = 0;
-        const updatedSongs = await Promise.all(
-          currentSongs.map(async (song) => {
-            // Skip if already has audio
-            if (song.audioUrl) return song;
+        let apiCallCount = 0;
+        const updatedSongs: Song[] = [];
 
-            // Find matching file
-            const matchingFile = files.find(file => {
-              const info = extractSongInfoFromFilename(file.name);
-              if (!info) return false;
-              return (
-                info.title.toLowerCase() === song.title.toLowerCase() &&
-                info.artist.toLowerCase() === song.artist.toLowerCase()
-              );
-            });
+        for (const song of currentSongs) {
+          // Skip ONLY IF we have a valid audioUrl, a fileId, AND it's not expired
+          if (song.audioUrl && song.fileId && !isAudioUrlExpired(song)) {
+            updatedSongs.push(song);
+            continue;
+          }
 
-            if (matchingFile) {
-              try {
-                const audioUrl = await getPlayableUrl(matchingFile.key);
-                if (audioUrl) {
-                  updatedCount++;
-                  console.log(`✓ Matched existing: ${song.title} - ${song.artist}`);
+          // Find matching file
+          const matchingFile = files.find(file => {
+            const info = extractSongInfoFromFilename(file.name);
+            if (!info) return false;
+            return (
+              info.title.toLowerCase() === song.title.toLowerCase() &&
+              info.artist.toLowerCase() === song.artist.toLowerCase()
+            );
+          });
 
-                  // Update in database
-                  await updateSongInDB(song.id, { audioUrl });
-
-                  return { ...song, audioUrl };
-                }
-              } catch (error) {
-                console.error(`Failed to get URL for ${song.title}:`, error);
+          if (matchingFile && apiCallCount < MAX_NEW_SONGS_PER_SYNC) {
+            try {
+              const queueLength = ctfileRateLimiter.getQueueLength();
+              if (queueLength > 0) {
+                console.log(`[Sync] Queue: ${queueLength} requests pending...`);
               }
+
+              const audioUrl = await getPlayableUrl(matchingFile.key);
+              apiCallCount++;
+              if (audioUrl) {
+                updatedCount++;
+                console.log(`✓ Matched existing (${apiCallCount}/${MAX_NEW_SONGS_PER_SYNC}): ${song.title} - ${song.artist}`);
+
+                // Update in database
+                const audioUrlUpdatedAt = new Date().toISOString();
+                await updateSongInDB(song.id, {
+                  audioUrl,
+                  fileId: matchingFile.key,
+                  audioUrlUpdatedAt
+                });
+
+                updatedSongs.push({ ...song, audioUrl, fileId: matchingFile.key, audioUrlUpdatedAt });
+              } else {
+                updatedSongs.push(song);
+              }
+            } catch (error) {
+              console.error(`Failed to get URL for ${song.title}:`, error);
+              updatedSongs.push(song);
             }
-            return song;
-          })
-        );
+          } else {
+            updatedSongs.push(song);
+          }
+        }
 
         currentSongs = updatedSongs;
 
@@ -332,10 +372,12 @@ const App: React.FC = () => {
           return !songExistsInDB(info.title, info.artist, currentSongs);
         });
 
-        console.log(`Found ${newFiles.length} new songs to import (max ${MAX_NEW_SONGS_PER_SYNC} per sync)`);
+        // Calculate remaining API calls budget after Phase 1
+        const remainingBudget = MAX_NEW_SONGS_PER_SYNC - apiCallCount;
+        console.log(`Found ${newFiles.length} new songs to import (budget: ${remainingBudget} remaining)`);
 
-        // Process new songs (limited to prevent overload)
-        const filesToProcess = newFiles.slice(0, MAX_NEW_SONGS_PER_SYNC);
+        // Process new songs (limited by remaining budget)
+        const filesToProcess = newFiles.slice(0, Math.max(0, remainingBudget));
         let importedCount = 0;
 
         for (const file of filesToProcess) {
@@ -343,7 +385,12 @@ const App: React.FC = () => {
           if (!info) continue;
 
           try {
-            // Get playable URL first
+            const queueLength = ctfileRateLimiter.getQueueLength();
+            if (queueLength > 0) {
+              console.log(`[Import] Queue: ${queueLength} requests pending...`);
+            }
+
+            // Get playable URL first (rate limited automatically)
             const audioUrl = await getPlayableUrl(file.key);
             if (!audioUrl) continue;
 
@@ -371,7 +418,9 @@ const App: React.FC = () => {
               popularity: metadata.popularity,
               description: metadata.description,
               coverUrl: metadata.coverUrl,
-              audioUrl: audioUrl
+              audioUrl: audioUrl,
+              fileId: file.key,
+              audioUrlUpdatedAt: new Date().toISOString()
             };
 
             // Save to database
@@ -379,10 +428,7 @@ const App: React.FC = () => {
             currentSongs.push(createdSong);
             importedCount++;
 
-            console.log(`✓ Imported new: ${info.title} - ${info.artist}`);
-
-            // Small delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 300));
+            console.log(`✓ Imported new (${importedCount}/${filesToProcess.length}): ${info.title} - ${info.artist}`);
           } catch (error) {
             console.error(`Failed to import ${info.title} - ${info.artist}:`, error);
           }
@@ -423,6 +469,59 @@ const App: React.FC = () => {
     songs.find(s => s.id === currentlyPlayingId) || null,
     [songs, currentlyPlayingId]
   );
+
+  // Helper to refresh a single song's audio URL if expired
+  const refreshSongUrl = useCallback(async (songId: string): Promise<string | null> => {
+    const song = songs.find(s => s.id === songId);
+    if (!song) return null;
+
+    if (!song.fileId) {
+      if (song.audioUrl && isAudioUrlExpired(song)) {
+        console.warn(`[Refresh] Cannot refresh "${song.title}" - fileId is missing. Sync may be in progress.`);
+      }
+      return song.audioUrl || null;
+    }
+
+    if (!isAudioUrlExpired(song)) {
+      return song.audioUrl || null;
+    }
+
+    console.log(`Refreshing expired audio URL for: ${song.title}`);
+    try {
+      const newUrl = await getPlayableUrl(song.fileId);
+      if (newUrl) {
+        const audioUrlUpdatedAt = new Date().toISOString();
+
+        // Update database
+        await updateSongInDB(song.id, {
+          audioUrl: newUrl,
+          audioUrlUpdatedAt
+        });
+
+        // Update local state
+        setSongs(prev => prev.map(s =>
+          s.id === song.id ? { ...s, audioUrl: newUrl, audioUrlUpdatedAt } : s
+        ));
+
+        return newUrl;
+      }
+    } catch (error) {
+      console.error(`Failed to refresh URL for ${song.title}:`, error);
+    }
+    return song.audioUrl || null;
+  }, [songs]);
+
+  // Centralized play handler that checks for expiration
+  const playSongWithRefresh = useCallback(async (id: string | null) => {
+    if (!id) {
+      setCurrentlyPlayingId(null);
+      return;
+    }
+
+    // Attempt to refresh if needed before playing
+    await refreshSongUrl(id);
+    setCurrentlyPlayingId(id);
+  }, [refreshSongUrl]);
 
   // Helper to add song to visible list if not already there
   const addToVisibleSongs = useCallback((song: Song) => {
@@ -479,7 +578,21 @@ const App: React.FC = () => {
     setIsSearching(true);
     setSearchedSongId(null); // Reset highlight
 
-    // 1. Search local mock database first (case insensitive)
+    // 1. Search local mock database first
+    // Prioritize exact matches
+    const exactMatch = songs.find(s =>
+      s.title.toLowerCase() === query.toLowerCase() ||
+      s.artist.toLowerCase() === query.toLowerCase()
+    );
+
+    if (exactMatch) {
+      setSearchedSongId(exactMatch.id);
+      addToVisibleSongs(exactMatch);
+      setIsSearching(false);
+      return;
+    }
+
+    // Fallback to substring match
     const localMatch = songs.find(s =>
       s.title.toLowerCase().includes(query.toLowerCase()) ||
       s.artist.toLowerCase().includes(query.toLowerCase())
@@ -527,7 +640,7 @@ const App: React.FC = () => {
         }
       }
     } else {
-      alert("未找到歌曲,或者歌曲不在2000-2024范围内。\nSong not found or out of range.");
+      alert("暂未找到或收录此歌曲。\nSong not found.");
     }
 
     setIsSearching(false);
@@ -537,6 +650,16 @@ const App: React.FC = () => {
 
   const handleSongEnded = useCallback(() => {
     if (!currentlyPlayingId) return;
+
+    if (playMode === 'single') {
+      // Logic handled by loop={true} in AudioPlayer mostly, but fallback:
+      const audioEl = document.querySelector('audio');
+      if (audioEl) {
+        audioEl.currentTime = 0;
+        audioEl.play().catch(console.error);
+      }
+      return;
+    }
 
     // Filter songs to only include those with audioUrl
     const playableSongs = songs.filter(s => s.audioUrl);
@@ -549,22 +672,26 @@ const App: React.FC = () => {
     if (playMode === 'shuffle') {
       // Pick random song from playable songs
       const randomIndex = Math.floor(Math.random() * playableSongs.length);
-      setCurrentlyPlayingId(playableSongs[randomIndex].id);
+      playSongWithRefresh(playableSongs[randomIndex].id);
     } else {
       // Sequential - find next playable song
       const currentIndex = playableSongs.findIndex(s => s.id === currentlyPlayingId);
       if (currentIndex !== -1) {
         const nextIndex = (currentIndex + 1) % playableSongs.length;
-        setCurrentlyPlayingId(playableSongs[nextIndex].id);
+        playSongWithRefresh(playableSongs[nextIndex].id);
       } else {
         // Current song not in playable list, start from first playable
-        setCurrentlyPlayingId(playableSongs[0].id);
+        playSongWithRefresh(playableSongs[0].id);
       }
     }
-  }, [currentlyPlayingId, playMode, songs]);
+  }, [currentlyPlayingId, playMode, songs, playSongWithRefresh]);
 
   const togglePlayMode = () => {
-    setPlayMode(prev => prev === 'sequential' ? 'shuffle' : 'sequential');
+    setPlayMode(prev => {
+      if (prev === 'sequential') return 'shuffle';
+      if (prev === 'shuffle') return 'single';
+      return 'sequential';
+    });
   };
 
   const togglePlayPause = () => {
@@ -572,7 +699,7 @@ const App: React.FC = () => {
       setCurrentlyPlayingId(null);
     } else if (songs.length > 0) {
       // Resume last played or start first
-      setCurrentlyPlayingId(songs[0].id);
+      playSongWithRefresh(songs[0].id);
     }
   };
 
@@ -659,7 +786,7 @@ const App: React.FC = () => {
                   addToVisibleSongs(song);
                   // If song has audio, also play it
                   if (song.audioUrl) {
-                    setCurrentlyPlayingId(id);
+                    playSongWithRefresh(id);
                   }
                 }
               }}
@@ -667,7 +794,7 @@ const App: React.FC = () => {
                 if (currentlyPlayingId === id) {
                   setCurrentlyPlayingId(null);
                 } else {
-                  setCurrentlyPlayingId(id);
+                  playSongWithRefresh(id);
                 }
               }}
               searchedSongId={searchedSongId}
@@ -676,7 +803,7 @@ const App: React.FC = () => {
             <Timeline
               songs={visibleSongs}
               currentlyPlayingId={currentlyPlayingId}
-              setCurrentlyPlayingId={setCurrentlyPlayingId}
+              setCurrentlyPlayingId={playSongWithRefresh}
               searchedSongId={searchedSongId}
             />
           )}
@@ -687,10 +814,15 @@ const App: React.FC = () => {
           {/* Play Mode Toggle */}
           <button
             onClick={togglePlayMode}
-            title={playMode === 'sequential' ? '顺序播放' : '随机播放'}
+            title={
+              playMode === 'sequential' ? '顺序播放' :
+                playMode === 'shuffle' ? '随机播放' : '单曲循环'
+            }
             className="p-3 bg-slate-800/80 backdrop-blur text-slate-300 rounded-full hover:bg-slate-700 transition-colors shadow-lg border border-slate-700 group relative"
           >
-            {playMode === 'sequential' ? <Repeat size={20} /> : <Shuffle size={20} />}
+            {playMode === 'sequential' && <Repeat size={20} />}
+            {playMode === 'shuffle' && <Shuffle size={20} />}
+            {playMode === 'single' && <Repeat1 size={20} />}
           </button>
 
           {/* Mute Toggle */}
@@ -715,6 +847,7 @@ const App: React.FC = () => {
           isPlaying={!!currentlyPlayingId}
           volume={isMuted ? 0 : 0.5}
           src={currentSong?.audioUrl}
+          loop={playMode === 'single'}
           onEnded={handleSongEnded}
         />
 

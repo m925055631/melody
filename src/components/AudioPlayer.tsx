@@ -8,10 +8,11 @@ interface AudioPlayerProps {
   isPlaying: boolean;
   volume: number;
   src?: string;
+  loop?: boolean;
   onEnded?: () => void;
 }
 
-export const AudioPlayer: React.FC<AudioPlayerProps> = ({ isPlaying, volume, src, onEnded }) => {
+export const AudioPlayer: React.FC<AudioPlayerProps> = ({ isPlaying, volume, src, loop = false, onEnded }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioSrc = src || DEFAULT_AUDIO_URL;
 
@@ -38,10 +39,10 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ isPlaying, volume, src
   }, [volume]);
 
   return (
-    <audio 
-      ref={audioRef} 
-      src={audioSrc} 
-      loop={false} 
+    <audio
+      ref={audioRef}
+      src={audioSrc}
+      loop={loop}
       onEnded={onEnded}
     />
   );
