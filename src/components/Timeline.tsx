@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import type { Song } from '../types';
 import { TimelineNode } from './TimelineNode';
-import { getYearsWithSongs, PIXELS_PER_YEAR, MIN_PIXELS_PER_YEAR, MAX_PIXELS_PER_YEAR, TIMELINE_PADDING, START_YEAR } from '../constants';
+import { getYearsWithSongs, PIXELS_PER_YEAR, TIMELINE_PADDING } from '../constants';
 import { Plus, Minus } from 'lucide-react';
 
 interface TimelineProps {
@@ -24,7 +24,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   searchedSongId
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [pixelsPerYear, setPixelsPerYear] = useState(PIXELS_PER_YEAR);
+  const pixelsPerYear = PIXELS_PER_YEAR; // Fixed zoom level
   const [yAxisScale, setYAxisScale] = useState(1); // Y-axis zoom scale (1 = normal)
 
   // Generate years dynamically based on songs
@@ -74,9 +74,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     const xOffsets = new Map<string, { start: number; width: number }>();
     let currentX = TIMELINE_PADDING;
 
-    // Create offset for all months from START_YEAR to END_YEAR
-    const END_YEAR = new Date().getFullYear();
-    for (let year = START_YEAR; year <= END_YEAR; year++) {
+    // Use dynamic year range from YEARS instead of hardcoded START_YEAR
+    const startYear = YEARS.length > 0 ? YEARS[0].year : new Date().getFullYear();
+    const endYear = YEARS.length > 0 ? YEARS[YEARS.length - 1].year : new Date().getFullYear();
+
+    for (let year = startYear; year <= endYear; year++) {
       for (let month = 1; month <= 12; month++) {
         const key = `${year}-${String(month).padStart(2, '0')}`;
         const count = densityMap.get(key) || 0;
@@ -101,7 +103,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     }
 
     return { densityMap, xOffsets, totalWidth: currentX + TIMELINE_PADDING };
-  }, [songs, pixelsPerYear]);
+  }, [songs, pixelsPerYear, YEARS]);
 
   const layout = useMemo(() => {
     const { densityMap, xOffsets } = monthDensityData;
@@ -116,7 +118,12 @@ export const Timeline: React.FC<TimelineProps> = ({
     // Track how many songs placed in each month for Y distribution
     const monthCounters = new Map<string, number>();
 
-    sortedSongs.forEach((song) => {
+    // Y-axis distribution: divide viewport into horizontal bands for even spacing
+    const NUM_Y_BANDS = 8;
+    const bandHeight = 80 / NUM_Y_BANDS;
+    const bandCounters = new Array(NUM_Y_BANDS).fill(0);
+
+    sortedSongs.forEach((song, songIndex) => {
       const dateParts = song.releaseDate.split('-');
       const year = parseInt(dateParts[0]);
       const month = parseInt(dateParts[1]) || 1;
@@ -148,27 +155,30 @@ export const Timeline: React.FC<TimelineProps> = ({
       const MIN_Y_SPACING = 8;
       const MIN_X_SPACING = 20;
 
-      // Calculate Y with varied distribution - avoid horizontal lines
-      let finalY: number;
+      // **Improved Uniform Y Distribution**
+      // Find the least occupied band for better distribution
+      let targetBand = 0;
+      let minCount = bandCounters[0];
+      for (let i = 1; i < NUM_Y_BANDS; i++) {
+        if (bandCounters[i] < minCount) {
+          minCount = bandCounters[i];
+          targetBand = i;
+        }
+      }
 
-      // Use multiple factors for Y position to create natural scatter:
-      // 1. Base from popularity (provides some order)
-      // 2. Golden angle offset based on song index for variety
-      // 3. Hash-based micro-offset for uniqueness
+      // Calculate base Y within the selected band
+      const bandBaseY = 10 + targetBand * bandHeight;
 
-      const popularityY = 15 + (song.popularity / 100) * 60; // 15-75% based on popularity
+      // Add controlled randomness within band
+      const randomSeed = (song.title.charCodeAt(0) || 0) + (song.artist.charCodeAt(0) || 0) + songIndex;
+      const pseudoRandom = (Math.sin(randomSeed) + 1) / 2;
+      const withinBandOffset = pseudoRandom * bandHeight;
 
-      // Golden angle creates natural-looking spiral distribution
-      const goldenAngle = 137.508;
-      const globalIndex = positionedNodes.length;
-      const goldenOffset = ((globalIndex * goldenAngle) % 360) / 360 * 30 - 15; // ±15% offset
+      // Slight popularity bias for visual interest
+      const popularityBias = (song.popularity / 100) * 5 - 2.5;
 
-      // Hash based on song name for consistent but varied positioning
-      const hash = (song.title.charCodeAt(0) || 0) + (song.artist.charCodeAt(0) || 0);
-      const hashOffset = (hash % 20) - 10; // ±10% offset
-
-      // Combine all factors
-      finalY = popularityY + goldenOffset + hashOffset;
+      let finalY = bandBaseY + withinBandOffset + popularityBias;
+      bandCounters[targetBand]++;
 
       // Clamp to valid range (10-90%)
       finalY = Math.max(10, Math.min(90, finalY));
@@ -181,9 +191,9 @@ export const Timeline: React.FC<TimelineProps> = ({
         finalX = offset.start + offset.width * 0.1 + (monthIndex / localDensity) * offset.width * 0.8 + xOffset * 0.3;
       }
 
-      // Collision detection
+      // Collision detection with improved attempts
       let attempts = 0;
-      while (attempts < 15) {
+      while (attempts < 20) {
         const overlapping = positionedNodes.find(n =>
           Math.abs(n.x - finalX) < MIN_X_SPACING && Math.abs(n.y - finalY) < MIN_Y_SPACING
         );
@@ -191,10 +201,10 @@ export const Timeline: React.FC<TimelineProps> = ({
         if (!overlapping) break;
 
         const angle = attempts * 137.508 * (Math.PI / 180);
-        const radius = 5 + attempts * 3;
+        const radius = 4 + attempts * 2.5;
 
-        finalY = Math.max(8, Math.min(92, finalY + Math.sin(angle) * radius * 0.8));
-        finalX = finalX + Math.cos(angle) * radius * 0.3;
+        finalY = Math.max(10, Math.min(90, finalY + Math.sin(angle) * radius * 0.6));
+        finalX = finalX + Math.cos(angle) * radius * 0.4;
         attempts++;
       }
 
@@ -205,10 +215,11 @@ export const Timeline: React.FC<TimelineProps> = ({
       });
     });
 
-    console.log('[Timeline] Non-linear layout:', {
+    console.log('[Timeline] Uniform Y-axis layout:', {
       totalSongs: songs.length,
       totalWidth: monthDensityData.totalWidth,
-      positionedNodes: positionedNodes.length
+      positionedNodes: positionedNodes.length,
+      bandDistribution: bandCounters
     });
 
     return positionedNodes;
@@ -248,25 +259,56 @@ export const Timeline: React.FC<TimelineProps> = ({
   }, [searchedSongId, layout, yAxisScale]); // Re-run if ID changes, Layout changes, or Y scale changes
 
   // ---------------------------------------------------------------------------
-  // Zoom Logic: Command+Scroll for horizontal, Shift+Scroll for vertical, Scroll for page scroll
+  // Initial Scroll to Year 2000
+  // ---------------------------------------------------------------------------
+  const [hasInitialScrolled, setHasInitialScrolled] = useState(false);
+
+  useEffect(() => {
+    if (!hasInitialScrolled && containerRef.current && YEARS.length > 0 && monthDensityData.xOffsets.size > 0) {
+      const container = containerRef.current;
+
+      // Find the position of year 2000
+      const targetYear = 2000;
+      const monthKey = `${targetYear}-01`; // January 2000
+      const offset = monthDensityData.xOffsets.get(monthKey);
+
+      if (offset) {
+        // Center year 2000 in viewport
+        const targetScrollX = offset.start - window.innerWidth / 3; // Show year 2000 at 1/3 from left
+
+        // Small delay to ensure DOM is ready
+        setTimeout(() => {
+          container.scrollTo({
+            left: Math.max(0, targetScrollX),
+            top: 0,
+            behavior: 'smooth'
+          });
+          setHasInitialScrolled(true);
+          console.log(`Initial scroll to year ${targetYear} at x=${offset.start}`);
+        }, 100);
+      } else {
+        // Fallback: scroll to beginning if 2000 not found
+        setTimeout(() => {
+          container.scrollTo({ left: 0, top: 0 });
+          setHasInitialScrolled(true);
+        }, 100);
+      }
+    }
+  }, [YEARS, monthDensityData, hasInitialScrolled]);
+
+  // ---------------------------------------------------------------------------
+  // Zoom Logic: Ctrl/Cmd+Scroll for Y-axis zoom, Regular scroll for page scroll
+  // X-axis zoom disabled
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      // Command/Ctrl + Scroll = Horizontal timeline zoom
+      // Command/Ctrl + Scroll = Vertical (Y-axis) zoom
       if (e.metaKey || e.ctrlKey) {
         const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-        setPixelsPerYear(p => Math.min(MAX_PIXELS_PER_YEAR, Math.max(MIN_PIXELS_PER_YEAR, p * zoomFactor)));
-      }
-      // Shift + Scroll = Vertical (Y-axis) zoom
-      // Note: Some browsers convert Shift+Scroll's deltaY to deltaX
-      else if (e.shiftKey) {
-        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-        const zoomFactor = delta > 0 ? 0.9 : 1.1;
         setYAxisScale(s => {
           const newScale = Math.min(3, Math.max(0.5, s * zoomFactor));
-          //console.log('[Y-Axis Zoom]', { deltaX: e.deltaX, deltaY: e.deltaY, delta, zoomFactor, oldScale: s, newScale });
           return newScale;
         });
       }
@@ -290,22 +332,6 @@ export const Timeline: React.FC<TimelineProps> = ({
       }
     };
   }, []);
-
-  // Preserve scroll center on zoom
-  const prevPixelsPerYear = useRef(pixelsPerYear);
-  useEffect(() => {
-    if (containerRef.current && prevPixelsPerYear.current !== pixelsPerYear) {
-      const container = containerRef.current;
-      const centerRatio = (container.scrollLeft + container.clientWidth / 2) / ((YEARS.length * prevPixelsPerYear.current) + TIMELINE_PADDING * 2);
-
-      const newTotalWidth = (YEARS.length * pixelsPerYear) + TIMELINE_PADDING * 2;
-      const newScrollLeft = (centerRatio * newTotalWidth) - (container.clientWidth / 2);
-
-      container.scrollLeft = newScrollLeft;
-      prevPixelsPerYear.current = pixelsPerYear;
-    }
-  }, [pixelsPerYear]);
-
 
   // ---------------------------------------------------------------------------
   // Dragging Logic
@@ -351,8 +377,8 @@ export const Timeline: React.FC<TimelineProps> = ({
     return monthDensityData.totalWidth;
   }, [monthDensityData]);
 
-  const handleZoomIn = () => setPixelsPerYear(p => Math.min(MAX_PIXELS_PER_YEAR, p + 200));
-  const handleZoomOut = () => setPixelsPerYear(p => Math.max(MIN_PIXELS_PER_YEAR, p - 200));
+  const handleZoomIn = () => setYAxisScale(s => Math.min(3, s + 0.2));
+  const handleZoomOut = () => setYAxisScale(s => Math.max(0.5, s - 0.2));
 
   return (
     <>
@@ -375,7 +401,16 @@ export const Timeline: React.FC<TimelineProps> = ({
         >
           {/* Horizon */}
           <div className="absolute bottom-[5%] w-full h-[1px] bg-gradient-to-r from-transparent via-neon-accent/20 to-transparent opacity-60 shadow-[0_0_15px_rgba(56,189,248,0.5)] blur-[0.5px]"></div>
+        </div>
 
+        {/* Fixed Timeline Markers Layer - Not affected by Y-axis scaling */}
+        <div
+          className="absolute bottom-0 left-0 pointer-events-none"
+          style={{
+            width: `${totalWidth}px`,
+            height: '100%'
+          }}
+        >
           {/* Years */}
           {YEARS.map((marker) => {
             // Get position from density-based layout (January of this year)
@@ -404,12 +439,12 @@ export const Timeline: React.FC<TimelineProps> = ({
           })}
 
           {/* Month Markers (shown when zoomed in) */}
-          {pixelsPerYear > 600 && YEARS.map((yearMarker) => {
+          {pixelsPerYear > 500 && YEARS.map((yearMarker) => {
             const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
             return monthNames.map((month) => {
               const monthKey = `${yearMarker.year}-${month}`;
               const offset = monthDensityData.xOffsets.get(monthKey);
-              const leftPos = offset ? offset.start : TIMELINE_PADDING;
+              const leftPos = offset ? offset.start + offset.width / 2 : TIMELINE_PADDING;
 
               return (
                 <div
@@ -465,11 +500,36 @@ export const Timeline: React.FC<TimelineProps> = ({
           <Plus size={20} />
         </button>
 
-        <div className="relative h-24 w-1 bg-slate-700 rounded-full overflow-hidden">
+        <div
+          className="relative h-24 w-1 bg-slate-700 rounded-full overflow-hidden cursor-pointer"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const slider = e.currentTarget;
+            const rect = slider.getBoundingClientRect();
+
+            const handleMouseMove = (moveEvent: MouseEvent) => {
+              const y = moveEvent.clientY - rect.top;
+              const percent = Math.max(0, Math.min(1, 1 - (y / rect.height))); // Inverted: top = max
+              const newScale = 0.5 + percent * (3 - 0.5);
+              setYAxisScale(newScale);
+            };
+
+            const handleMouseUp = () => {
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+
+            // Initial set
+            handleMouseMove(e.nativeEvent);
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }}
+        >
           <div
-            className="absolute bottom-0 left-0 w-full bg-neon-accent/50 transition-all duration-300"
+            className="absolute bottom-0 left-0 w-full bg-neon-accent/50 transition-none pointer-events-none"
             style={{
-              height: `${((pixelsPerYear - MIN_PIXELS_PER_YEAR) / (MAX_PIXELS_PER_YEAR - MIN_PIXELS_PER_YEAR)) * 100}%`
+              height: `${((yAxisScale - 0.5) / (3 - 0.5)) * 100}%`
             }}
           />
         </div>
@@ -488,13 +548,13 @@ export const Timeline: React.FC<TimelineProps> = ({
             <div className="text-slate-200 text-xs font-semibold mb-2">操作指南</div>
             <div className="space-y-1 text-[11px] text-slate-400">
               <div className="flex items-center gap-2">
+                <span className="w-5 text-center">📊</span>
+                <span>拖动进度条 → Y轴缩放</span>
+              </div>
+              <div className="flex items-center gap-2">
                 <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px]">
                   {navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'}
                 </kbd>
-                <span>+ 滚轮 → 时间轴缩放</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px]">⇧</kbd>
                 <span>+ 滚轮 → Y轴缩放</span>
               </div>
               <div className="flex items-center gap-2">

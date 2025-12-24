@@ -3,10 +3,11 @@ import type { Song, YearMarker } from './types';
 
 export const START_YEAR = 2000; // Adjusted to match actual song data
 export const END_YEAR = new Date().getFullYear();
-export const PIXELS_PER_YEAR = 400; // Default width of one year
+export const PIXELS_PER_YEAR = 800; // Increased default width to show months (was 400)
 export const MIN_PIXELS_PER_YEAR = 100; // Zoom out limit (dense)
 export const MAX_PIXELS_PER_YEAR = 2400; // Zoom in limit (sparse) - doubled for more detail
 export const TIMELINE_PADDING = 800; // Padding start/end
+
 
 // A curated list of real Chinese pop songs from 2000 to present
 // Replacing the random "Filler" songs with actual hits.
@@ -162,29 +163,43 @@ export const MOCK_DATABASE = INITIAL_SONGS.sort((a, b) =>
 
 /**
  * Generate year markers for years that have at least one song
- * This ensures we only show years with actual content
+ * Automatically adjusts start year based on earliest song
  */
 export function getYearsWithSongs(songs: Song[]): YearMarker[] {
   if (songs.length === 0) {
-    // Return all years if no songs (for initial render)
+    // Return current year range if no songs (for initial render)
     return Array.from(
       { length: END_YEAR - START_YEAR + 1 },
       (_, i) => ({ year: START_YEAR + i, label: String(START_YEAR + i) })
     );
   }
 
-  // Extract years from songs
-  const yearsWithSongs = new Set<number>();
-  songs.forEach(song => {
-    const year = new Date(song.releaseDate).getFullYear();
-    if (year >= START_YEAR && year <= END_YEAR) {
-      yearsWithSongs.add(year);
-    }
+  // Extract years from songs and find min/max
+  const songYears = songs.map(song => new Date(song.releaseDate).getFullYear());
+  const minYear = Math.min(...songYears);
+  const maxYear = Math.max(...songYears);
+
+  // Use actual min year from songs, but ensure reasonable bounds
+  const actualStartYear = Math.max(1950, minYear); // Don't go before 1950
+  const actualEndYear = Math.max(new Date().getFullYear(), maxYear);
+
+  // Generate year markers for the entire range (whether they have songs or not)
+  // This ensures smooth timeline even if some years are empty
+  const years: YearMarker[] = [];
+  for (let year = actualStartYear; year <= actualEndYear; year++) {
+    years.push({ year, label: String(year) });
+  }
+
+  console.log('[getYearsWithSongs]', {
+    songsCount: songs.length,
+    minYear,
+    maxYear,
+    actualStartYear,
+    actualEndYear,
+    yearsGenerated: years.length
   });
 
-  // Convert to sorted array of year markers
-  const years = Array.from(yearsWithSongs).sort((a, b) => a - b);
-  return years.map(year => ({ year, label: String(year) }));
+  return years;
 }
 
 // Keep legacy YEARS export for backwards compatibility (all years from START_YEAR to END_YEAR)

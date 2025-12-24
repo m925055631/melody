@@ -27,8 +27,10 @@ import {
 import { Volume2, VolumeX, Shuffle, Repeat, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
-  // Start with empty, we will load from Supabase
+  // All songs from database
   const [songs, setSongs] = useState<Song[]>([]);
+  // Visible songs (max 200 random + searched songs)
+  const [visibleSongs, setVisibleSongs] = useState<Song[]>([]);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   const [searchedSongId, setSearchedSongId] = useState<string | null>(null);
@@ -121,6 +123,27 @@ const App: React.FC = () => {
     };
     initData();
   }, [deduplicateSongs]);
+
+  // Sample random 200 songs for display when songs change
+  useEffect(() => {
+    if (songs.length === 0) {
+      setVisibleSongs([]);
+      return;
+    }
+
+    const MAX_VISIBLE = 200;
+
+    if (songs.length <= MAX_VISIBLE) {
+      // Show all if less than limit
+      setVisibleSongs(songs);
+    } else {
+      // Randomly sample 200 songs
+      const shuffled = [...songs].sort(() => Math.random() - 0.5);
+      const sampled = shuffled.slice(0, MAX_VISIBLE);
+      console.log(`Displaying ${MAX_VISIBLE} random songs out of ${songs.length} total`);
+      setVisibleSongs(sampled);
+    }
+  }, [songs]);
 
   // Track visitor and get statistics (non-blocking)
   useEffect(() => {
@@ -381,6 +404,21 @@ const App: React.FC = () => {
     [songs, currentlyPlayingId]
   );
 
+  // Helper to add song to visible list if not already there
+  const addToVisibleSongs = useCallback((song: Song) => {
+    setVisibleSongs(prev => {
+      // Check if already visible
+      if (prev.some(s => s.id === song.id)) {
+        return prev;
+      }
+      // Add to visible songs
+      console.log(`Adding searched song to visible: ${song.title}`);
+      return [...prev, song].sort((a, b) =>
+        new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
+      );
+    });
+  }, []);
+
   // AI Fetch Effect for Lyrics & Better Cover
   useEffect(() => {
     const fetchMissingDetails = async () => {
@@ -429,6 +467,8 @@ const App: React.FC = () => {
 
     if (localMatch) {
       setSearchedSongId(localMatch.id);
+      // Add to visible songs if not already there
+      addToVisibleSongs(localMatch);
       setIsSearching(false);
       return;
     }
@@ -449,6 +489,8 @@ const App: React.FC = () => {
             new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
           ));
           setSearchedSongId(createdSong.id);
+          // Add to visible songs
+          addToVisibleSongs(createdSong);
         } catch (error) {
           console.error('Error saving AI-generated song to Supabase:', error);
           // Fallback: just add to local state
@@ -459,7 +501,10 @@ const App: React.FC = () => {
         }
       } else {
         const existing = songs.find(s => s.title === aiResult.title && s.artist === aiResult.artist);
-        if (existing) setSearchedSongId(existing.id);
+        if (existing) {
+          setSearchedSongId(existing.id);
+          addToVisibleSongs(existing);
+        }
       }
     } else {
       alert("未找到歌曲,或者歌曲不在2000-2024范围内。\nSong not found or out of range.");
@@ -569,18 +614,33 @@ const App: React.FC = () => {
         {/* Visitor Stats */}
         <VisitorStats totalVisits={visitorStats.totalVisits} activeUsers={visitorStats.activeUsers} />
 
+        {/* Song Count Badge */}
+        {songs.length > 200 && (
+          <div className="fixed top-20 right-6 z-40 bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-lg border border-slate-700 shadow-lg">
+            <div className="text-xs text-slate-400">
+              显示 <span className="text-neon-accent font-semibold">{visibleSongs.length}</span> / {songs.length} 首歌曲
+            </div>
+            <div className="text-[10px] text-slate-500 mt-0.5">
+              搜索可显示其他歌曲
+            </div>
+          </div>
+        )}
+
         {/* Main Content - Timeline on Desktop, Song List on Mobile */}
         <div className={`absolute inset-0 z-10 ${isMobile ? 'pt-28 pb-24 overflow-y-auto' : 'pt-20 pb-24'}`}>
           {isMobile ? (
             <MobileSongList
-              songs={songs}
+              songs={visibleSongs}
               currentlyPlayingId={currentlyPlayingId}
               onSongClick={(id) => {
                 setSearchedSongId(id);
-                // If song has audio, also play it
                 const song = songs.find(s => s.id === id);
-                if (song?.audioUrl) {
-                  setCurrentlyPlayingId(id);
+                if (song) {
+                  addToVisibleSongs(song);
+                  // If song has audio, also play it
+                  if (song.audioUrl) {
+                    setCurrentlyPlayingId(id);
+                  }
                 }
               }}
               onPlayToggle={(id) => {
@@ -594,7 +654,7 @@ const App: React.FC = () => {
             />
           ) : (
             <Timeline
-              songs={songs}
+              songs={visibleSongs}
               currentlyPlayingId={currentlyPlayingId}
               setCurrentlyPlayingId={setCurrentlyPlayingId}
               searchedSongId={searchedSongId}
