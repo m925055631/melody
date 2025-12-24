@@ -2,32 +2,66 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X, Loader2, Music, RefreshCw, Download, Check } from 'lucide-react';
 import type { Song } from '../types';
 import { fetchSongDetailsWithAI } from '../services/backendProxy';
+import { parseLRC, getCurrentLyricIndex, isLRCFormat, convertPlainToLyrics, type LyricLine } from '../utils/lrcParser';
 
 interface LyricsModalProps {
   isOpen: boolean;
   onClose: () => void;
   song: Song | null;
+  currentTime?: number; // 当前播放时间（秒）
   onUpdateLyrics?: (songId: string, lyrics: string) => void;
 }
 
-export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song, onUpdateLyrics }) => {
+export const LyricsModal: React.FC<LyricsModalProps> = ({
+  isOpen,
+  onClose,
+  song,
+  currentTime = 0,
+  onUpdateLyrics
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [downloadState, setDownloadState] = useState<'idle' | 'success'>('idle');
+  const currentLineRef = useRef<HTMLParagraphElement>(null);
 
+  // Parse lyrics into structured format
+  const parsedLyrics: LyricLine[] | null = song?.lyrics
+    ? (isLRCFormat(song.lyrics)
+      ? parseLRC(song.lyrics)
+      : convertPlainToLyrics(song.lyrics))
+    : null;
+
+  // Get current lyric index based on play time
+  const currentIndex = parsedLyrics ? getCurrentLyricIndex(parsedLyrics, currentTime) : -1;
+
+  // Auto-scroll to current lyric line
   useEffect(() => {
-    // Reset scroll when song changes or opens
+    if (currentLineRef.current && scrollRef.current) {
+      const container = scrollRef.current;
+      const element = currentLineRef.current;
+
+      // Calculate scroll position to center the current line
+      const containerHeight = container.clientHeight;
+      const elementTop = element.offsetTop;
+      const elementHeight = element.clientHeight;
+
+      const scrollTo = elementTop - containerHeight / 2 + elementHeight / 2;
+
+      container.scrollTo({
+        top: scrollTo,
+        behavior: 'smooth'
+      });
+    }
+  }, [currentIndex]);
+
+  // Reset scroll when song changes or opens
+  useEffect(() => {
     if (isOpen && scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
   }, [isOpen, song?.id]);
 
   if (!isOpen || !song) return null;
-
-  // Formatting lyrics
-  const lyricsLines = song.lyrics
-    ? song.lyrics.split('\n').filter(line => line.trim() !== '')
-    : null;
 
   // Re-search lyrics with AI
   const handleResearchLyrics = async () => {
@@ -61,7 +95,6 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
 
-    // Show success feedback
     setDownloadState('success');
     setTimeout(() => setDownloadState('idle'), 2000);
   };
@@ -88,8 +121,8 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
             onClick={handleResearchLyrics}
             disabled={isSearching}
             className={`p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${isSearching
-                ? 'bg-neon-accent/20 text-neon-accent'
-                : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
+              ? 'bg-neon-accent/20 text-neon-accent'
+              : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
               }`}
             title="重新搜索歌词"
           >
@@ -100,12 +133,12 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
           </button>
 
           {/* Download Button */}
-          {lyricsLines && (
+          {parsedLyrics && (
             <button
               onClick={handleDownloadLyrics}
               className={`p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${downloadState === 'success'
-                  ? 'bg-green-500/20 text-green-400 scale-105'
-                  : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
+                ? 'bg-green-500/20 text-green-400 scale-105'
+                : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
                 }`}
               title="下载歌词"
             >
@@ -129,7 +162,7 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
       {/* Content */}
       <div className="flex-1 overflow-hidden relative z-10 flex flex-col md:flex-row items-center justify-center gap-8 p-6">
 
-        {/* Left: Album Art (Hidden on small screens if needed, but good for aesthetics) */}
+        {/* Left: Album Art */}
         <div className="hidden md:block w-80 h-80 shrink-0 shadow-2xl rounded-2xl overflow-hidden border border-white/10 relative group">
           <img src={song.coverUrl} alt="Album Art" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
@@ -138,34 +171,54 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
           </div>
         </div>
 
-        {/* Right: Lyrics */}
+        {/* Right: Lyrics with Dynamic Highlighting */}
         <div
           ref={scrollRef}
           className="w-full max-w-lg h-[60vh] overflow-y-auto no-scrollbar mask-image-gradient text-center space-y-6 px-4"
           style={{ maskImage: 'linear-gradient(to bottom, transparent, black 10%, black 90%, transparent)' }}
         >
-          {!lyricsLines ? (
+          {!parsedLyrics ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
               <Loader2 className="animate-spin text-neon-accent" size={32} />
               <p>AI 正在搜索歌词...</p>
               <p className="text-xs text-slate-600">Powered by Gemini</p>
             </div>
           ) : (
-            lyricsLines.map((line, idx) => (
-              <p
-                key={idx}
-                className="text-lg md:text-xl text-slate-300 hover:text-white transition-colors duration-300 leading-relaxed font-light"
-              >
-                {line}
-              </p>
-            ))
-          )}
+            <>
+              {parsedLyrics.map((line, idx) => {
+                const isCurrent = idx === currentIndex;
+                const isPast = idx < currentIndex;
+                const isUpcoming = idx > currentIndex && idx <= currentIndex + 2;
 
-          {lyricsLines && (
-            <div className="pt-12 pb-24 text-slate-600 text-xs flex flex-col items-center gap-2">
-              <Music size={12} />
-              <span>End of Lyrics</span>
-            </div>
+                return (
+                  <p
+                    key={idx}
+                    ref={isCurrent ? currentLineRef : null}
+                    className={`
+                      text-lg md:text-xl leading-relaxed font-light transition-all duration-500
+                      ${isCurrent
+                        ? 'text-white font-medium scale-110 text-shadow-glow'
+                        : isPast
+                          ? 'text-slate-500'
+                          : isUpcoming
+                            ? 'text-slate-400'
+                            : 'text-slate-600'
+                      }
+                    `}
+                    style={{
+                      textShadow: isCurrent ? '0 0 20px rgba(56, 189, 248, 0.5)' : 'none'
+                    }}
+                  >
+                    {line.text}
+                  </p>
+                );
+              })}
+
+              <div className="pt-12 pb-24 text-slate-600 text-xs flex flex-col items-center gap-2">
+                <Music size={12} />
+                <span>End of Lyrics</span>
+              </div>
+            </>
           )}
         </div>
       </div>

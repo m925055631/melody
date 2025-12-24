@@ -556,11 +556,12 @@ const App: React.FC = () => {
     setIsSearching(true);
     setSearchedSongId(null); // Reset highlight
 
-    // 1. Search local mock database first
-    // Prioritize exact matches
+    const normalizedQuery = query.toLowerCase().trim();
+
+    // 1. Exact match - highest priority
     const exactMatch = songs.find(s =>
-      s.title.toLowerCase() === query.toLowerCase() ||
-      s.artist.toLowerCase() === query.toLowerCase()
+      s.title.toLowerCase() === normalizedQuery ||
+      s.artist.toLowerCase() === normalizedQuery
     );
 
     if (exactMatch) {
@@ -570,41 +571,72 @@ const App: React.FC = () => {
       return;
     }
 
-    // Fallback to substring match
+    // 2. Multi-keyword match (e.g., "夜曲 周杰伦" -> title:"夜曲" + artist:"周杰伦")
+    const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
+
+    if (keywords.length > 1) {
+      // Try to find a song where different keywords match title and artist
+      const multiKeywordMatch = songs.find(s => {
+        const titleLower = s.title.toLowerCase();
+        const artistLower = s.artist.toLowerCase();
+
+        // Check if at least one keyword matches title and another matches artist
+        const titleMatches = keywords.filter(k => titleLower.includes(k));
+        const artistMatches = keywords.filter(k => artistLower.includes(k));
+
+        // Match if we have keywords matching both title and artist
+        return titleMatches.length > 0 && artistMatches.length > 0;
+      });
+
+      if (multiKeywordMatch) {
+        setSearchedSongId(multiKeywordMatch.id);
+        addToVisibleSongs(multiKeywordMatch);
+        setIsSearching(false);
+        return;
+      }
+
+      // Alternative: all keywords match either title or artist
+      const allKeywordsMatch = songs.find(s => {
+        const combined = `${s.title} ${s.artist}`.toLowerCase();
+        return keywords.every(k => combined.includes(k));
+      });
+
+      if (allKeywordsMatch) {
+        setSearchedSongId(allKeywordsMatch.id);
+        addToVisibleSongs(allKeywordsMatch);
+        setIsSearching(false);
+        return;
+      }
+    }
+
+    // 3. Single keyword or substring match
     const localMatch = songs.find(s =>
-      s.title.toLowerCase().includes(query.toLowerCase()) ||
-      s.artist.toLowerCase().includes(query.toLowerCase())
+      s.title.toLowerCase().includes(normalizedQuery) ||
+      s.artist.toLowerCase().includes(normalizedQuery)
     );
 
     if (localMatch) {
       setSearchedSongId(localMatch.id);
-      // Add to visible songs if not already there
       addToVisibleSongs(localMatch);
       setIsSearching(false);
       return;
     }
 
-    // 2. If not found, use Gemini AI to find/generate it
+    // 4. AI search as last resort
     const aiResult = await searchSongWithAI(query);
 
     if (aiResult) {
-      // Check if we already added it (avoid dupes by ID logic or title)
       const exists = songs.some(s => s.title === aiResult.title && s.artist === aiResult.artist);
       if (!exists) {
         try {
-          // Save to Supabase
           const createdSong = await createSong(aiResult);
-
-          // Update local state
           setSongs(prev => [...prev, createdSong].sort((a, b) =>
             new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
           ));
           setSearchedSongId(createdSong.id);
-          // Add to visible songs
           addToVisibleSongs(createdSong);
         } catch (error) {
           console.error('Error saving AI-generated song to Supabase:', error);
-          // Fallback: just add to local state
           setSongs(prev => [...prev, aiResult].sort((a, b) =>
             new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
           ));
@@ -622,7 +654,7 @@ const App: React.FC = () => {
     }
 
     setIsSearching(false);
-  }, [songs]);
+  }, [songs, addToVisibleSongs]);
 
 
 
@@ -770,7 +802,7 @@ const App: React.FC = () => {
               <Loader2 className="animate-spin text-neon-accent" size={20} />
               <div>
                 <div className="text-sm font-medium text-slate-200">Loading Music Library</div>
-                <div className="text-xs text-slate-400 mt-0.5">Connecting to database...</div>
+
               </div>
             </div>
           </div>
@@ -866,6 +898,7 @@ const App: React.FC = () => {
           isOpen={isLyricsModalOpen}
           onClose={() => setIsLyricsModalOpen(false)}
           song={currentSong}
+          currentTime={currentTime}
           onUpdateLyrics={async (songId, lyrics) => {
             // Update local state
             setSongs(prev => prev.map(s =>
