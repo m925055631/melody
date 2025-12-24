@@ -6,10 +6,8 @@ import { AudioPlayer } from './components/AudioPlayer';
 
 import { BottomPlayerBar } from './components/BottomPlayerBar';
 import { LyricsModal } from './components/LyricsModal';
-import { SyncStatusBadge } from './components/SyncStatusBadge';
 import { VisitorStats } from './components/VisitorStats';
 import { MobileSongList } from './components/MobileSongList';
-import { MOCK_DATABASE } from './constants';
 import type { Song } from './types';
 // All backend operations go through secure Worker proxy (no secrets exposed in browser)
 import {
@@ -41,10 +39,11 @@ const App: React.FC = () => {
 
   const [isLyricsModalOpen, setIsLyricsModalOpen] = useState(false);
   const [playMode, setPlayMode] = useState<'sequential' | 'shuffle' | 'single'>('sequential');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
-  const [matchedSongsCount, setMatchedSongsCount] = useState(0);
   const [visitorStats, setVisitorStats] = useState({ totalVisits: 0, activeUsers: 0 });
+
+  // Audio playback time tracking
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
 
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false);
@@ -107,29 +106,14 @@ const App: React.FC = () => {
           }
           setSongs(uniqueSongs);
         } else {
-          // First visit: Migrate mock data to Supabase
-          console.log('No songs in database. Migrating initial data...');
-
-          // Create each song via Worker API
-          const createdSongs: Song[] = [];
-          for (const song of MOCK_DATABASE) {
-            try {
-              const created = await createSong(song);
-              createdSongs.push(created);
-            } catch (error) {
-              console.error(`Failed to create song ${song.title}:`, error);
-            }
-          }
-
-          // Fetch all songs after migration
-          const migratedSongs = await getAllSongs();
-          const uniqueSongs = deduplicateSongs(migratedSongs);
-          setSongs(uniqueSongs);
+          // No songs in database - start with empty state
+          console.log('No songs in database. Starting with empty library.');
+          setSongs([]);
         }
       } catch (error) {
         console.error('Error loading songs from Supabase:', error);
-        // Fallback to mock data if Supabase fails
-        setSongs(MOCK_DATABASE);
+        // Start with empty array on error - user can add songs manually
+        setSongs([]);
       } finally {
         setIsDataLoaded(true);
       }
@@ -287,14 +271,12 @@ const App: React.FC = () => {
       }
 
       try {
-        setIsSyncing(true);
         console.log('Starting CTFile sync via Worker API...');
 
         // Get files from CTFile via Worker
         const files = await listMusicFiles();
         if (files.length === 0) {
           console.log('No music files found in CTFile');
-          setIsSyncing(false);
           return;
         }
 
@@ -439,12 +421,10 @@ const App: React.FC = () => {
         setSongs(uniqueSongs);
 
         const now = new Date();
-        setLastSyncTime(now);
         localStorage.setItem(LAST_SYNC_KEY, now.toISOString());
 
         // Count matched songs (those with audioUrl)
         const matched = uniqueSongs.filter(s => s.audioUrl).length;
-        setMatchedSongsCount(matched);
 
         console.log(`🎵 CTFile sync complete: ${matched}/${uniqueSongs.length} songs with audio`);
         console.log(`   - ${updatedCount} existing songs matched`);
@@ -454,8 +434,6 @@ const App: React.FC = () => {
         }
       } catch (error) {
         console.error('CTFile sync failed:', error);
-      } finally {
-        setIsSyncing(false);
       }
     };
 
@@ -698,19 +676,49 @@ const App: React.FC = () => {
     if (currentlyPlayingId) {
       setCurrentlyPlayingId(null);
     } else if (songs.length > 0) {
-      // Resume last played or start first
       playSongWithRefresh(songs[0].id);
     }
   };
 
-  if (!isDataLoaded) {
-    return (
-      <div className="w-screen h-screen bg-slate-900 flex flex-col items-center justify-center text-neon-accent">
-        <Loader2 className="animate-spin mb-4" size={48} />
-        <p>Loading History...</p>
-      </div>
-    );
-  }
+  // Handle seek in audio player
+  const handleSeek = useCallback((time: number) => {
+    // Seek will be handled via audio element directly in AudioPlayer
+    const audioElement = document.querySelector('audio');
+    if (audioElement) {
+      audioElement.currentTime = time;
+    }
+  }, []);
+
+  // Handle next track
+  const handleNext = useCallback(() => {
+    if (!currentlyPlayingId) return;
+
+    // Filter to only playable songs
+    const playableSongs = songs.filter(s => s.audioUrl);
+    if (playableSongs.length === 0) return;
+
+    if (playMode === 'shuffle') {
+      // Pick random song different from current
+      const otherSongs = playableSongs.filter(s => s.id !== currentlyPlayingId);
+      if (otherSongs.length > 0) {
+        const randomIndex = Math.floor(Math.random() * otherSongs.length);
+        playSongWithRefresh(otherSongs[randomIndex].id);
+      }
+    } else {
+      // Sequential - find next song
+      const currentIndex = playableSongs.findIndex(s => s.id === currentlyPlayingId);
+      if (currentIndex !== -1) {
+        const nextIndex = (currentIndex + 1) % playableSongs.length;
+        playSongWithRefresh(playableSongs[nextIndex].id);
+      }
+    }
+  }, [currentlyPlayingId, playMode, songs, playSongWithRefresh]);
+
+  // Handle time updates from AudioPlayer
+  const handleTimeUpdate = useCallback((current: number, dur: number) => {
+    setCurrentTime(current);
+    setDuration(dur);
+  }, []);
 
   return (
     // 3D Cosmic Space Background
@@ -738,13 +746,7 @@ const App: React.FC = () => {
         {/* Subtle gradient overlay for depth */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-indigo-950/20 pointer-events-none" />
 
-        {/* CTFile Sync Status */}
-        <SyncStatusBadge
-          isSyncing={isSyncing}
-          lastSyncTime={lastSyncTime}
-          matchedCount={matchedSongsCount}
-          totalCount={songs.length}
-        />
+
 
         {/* Dynamic Blurred Cover Background (When playing) */}
         <div
@@ -761,17 +763,20 @@ const App: React.FC = () => {
         {/* Visitor Stats */}
         <VisitorStats totalVisits={visitorStats.totalVisits} activeUsers={visitorStats.activeUsers} />
 
-        {/* Song Count Badge */}
-        {songs.length > 200 && (
-          <div className="fixed top-20 right-6 z-40 bg-slate-800/90 backdrop-blur-md px-3 py-2 rounded-lg border border-slate-700 shadow-lg">
-            <div className="text-xs text-slate-400">
-              显示 <span className="text-neon-accent font-semibold">{visibleSongs.length}</span> / {songs.length} 首歌曲
-            </div>
-            <div className="text-[10px] text-slate-500 mt-0.5">
-              搜索可显示其他歌曲
+        {/* Data Loading Status - Bottom Right */}
+        {!isDataLoaded && (
+          <div className="fixed bottom-28 right-6 z-50 bg-slate-800/95 backdrop-blur-md px-4 py-3 rounded-lg border border-slate-700 shadow-xl">
+            <div className="flex items-center gap-3">
+              <Loader2 className="animate-spin text-neon-accent" size={20} />
+              <div>
+                <div className="text-sm font-medium text-slate-200">Loading Music Library</div>
+                <div className="text-xs text-slate-400 mt-0.5">Connecting to database...</div>
+              </div>
             </div>
           </div>
         )}
+
+
 
         {/* Main Content - Timeline on Desktop, Song List on Mobile */}
         <div className={`absolute inset-0 z-10 ${isMobile ? 'pt-28 pb-24 overflow-y-auto' : 'pt-20 pb-24'}`}>
@@ -840,6 +845,10 @@ const App: React.FC = () => {
           isPlaying={!!currentlyPlayingId}
           onPlayToggle={togglePlayPause}
           onOpenLyrics={() => setIsLyricsModalOpen(true)}
+          onNext={handleNext}
+          currentTime={currentTime}
+          duration={duration}
+          onSeek={handleSeek}
         />
 
         {/* Audio Controller Logic (Hidden) */}
@@ -849,6 +858,7 @@ const App: React.FC = () => {
           src={currentSong?.audioUrl}
           loop={playMode === 'single'}
           onEnded={handleSongEnded}
+          onTimeUpdate={handleTimeUpdate}
         />
 
         {/* Modals */}
