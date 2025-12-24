@@ -245,8 +245,10 @@ export const Timeline: React.FC<TimelineProps> = ({
         const scaledContentHeight = containerHeight * yAxisScale;
         const halfScreenY = containerHeight / 2;
 
-        // Convert percentage Y (0-100) to actual pixel position
-        const actualY = (targetNode.y / 100) * scaledContentHeight;
+        // Node is positioned from bottom (bottom: y%)
+        // Convert to top position: (100 - y)% from top
+        const topPercent = 100 - targetNode.y;
+        const actualY = (topPercent / 100) * scaledContentHeight;
         const targetScrollY = actualY - halfScreenY;
 
         container.scrollTo({

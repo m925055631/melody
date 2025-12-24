@@ -137,13 +137,33 @@ const App: React.FC = () => {
       // Show all if less than limit
       setVisibleSongs(songs);
     } else {
-      // Randomly sample 200 songs
-      const shuffled = [...songs].sort(() => Math.random() - 0.5);
-      const sampled = shuffled.slice(0, MAX_VISIBLE);
-      console.log(`Displaying ${MAX_VISIBLE} random songs out of ${songs.length} total`);
-      setVisibleSongs(sampled);
+      // Smart sampling: preserve existing to avoid re-shuffling
+      setVisibleSongs(prev => {
+        // Keep existing visible songs, just update their data
+        if (prev.length >= MAX_VISIBLE) {
+          const updated = prev
+            .map(v => songs.find(s => s.id === v.id))
+            .filter((s): s is Song => s !== undefined);
+
+          // Ensure currently playing is always visible
+          if (currentlyPlayingId && !updated.some(s => s.id === currentlyPlayingId)) {
+            const playing = songs.find(s => s.id === currentlyPlayingId);
+            if (playing && updated.length > 0) {
+              updated[0] = playing;
+            }
+          }
+
+          return updated.length > 0 ? updated : prev;
+        }
+
+        // Initial sampling
+        const shuffled = [...songs].sort(() => Math.random() - 0.5);
+        const sampled = shuffled.slice(0, MAX_VISIBLE);
+        console.log(`Displaying ${MAX_VISIBLE} random songs out of ${songs.length} total`);
+        return sampled;
+      });
     }
-  }, [songs]);
+  }, [songs, currentlyPlayingId]);
 
   // Track visitor and get statistics (non-blocking)
   useEffect(() => {
