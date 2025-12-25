@@ -460,36 +460,94 @@ export const Timeline: React.FC<TimelineProps> = ({
             minHeight: '100%'
           }}
         >
-          {layout.map((node) => {
-            // Dynamic Y spreading: when zoomed in, spread nodes away from center (50%)
-            // This makes closely spaced nodes separate more at higher zoom levels
-            const centerY = 50;
-            const distanceFromCenter = node.y - centerY;
+          {(() => {
+            // Calculate adjusted Y positions with collision avoidance when zoomed
+            // Group nodes by X proximity (within 20px are considered same column)
+            const X_THRESHOLD = 30;
+            const sortedNodes = [...layout].sort((a, b) => a.x - b.x);
 
-            // Apply non-linear spreading based on zoom level
-            // At yAxisScale = 1, no extra spreading
-            // At yAxisScale > 1, nodes spread outward from center
-            const spreadFactor = Math.pow(yAxisScale, 0.5); // Square root for gentler spreading
-            const adjustedY = centerY + distanceFromCenter * spreadFactor;
+            // Create groups of overlapping nodes
+            const groups: typeof layout[] = [];
+            let currentGroup: typeof layout = [];
 
-            // Clamp to valid range
-            const finalY = Math.max(5, Math.min(95, adjustedY));
+            for (const node of sortedNodes) {
+              if (currentGroup.length === 0) {
+                currentGroup.push(node);
+              } else {
+                const lastNode = currentGroup[currentGroup.length - 1];
+                if (Math.abs(node.x - lastNode.x) < X_THRESHOLD) {
+                  currentGroup.push(node);
+                } else {
+                  groups.push(currentGroup);
+                  currentGroup = [node];
+                }
+              }
+            }
+            if (currentGroup.length > 0) {
+              groups.push(currentGroup);
+            }
 
-            return (
-              <TimelineNode
-                key={node.song.id}
-                song={node.song}
-                currentlyPlayingId={currentlyPlayingId}
-                setCurrentlyPlayingId={setCurrentlyPlayingId}
-                x={node.x}
-                y={finalY} // Apply dynamic Y spreading based on zoom
-                mousePos={mousePos}
-                containerHeight={(containerRef.current?.clientHeight || 0) * yAxisScale}
-                isSearched={node.song.id === searchedSongId}
-                onRefreshUrl={onRefreshUrl ? () => onRefreshUrl(node.song.id) : undefined}
-              />
-            );
-          })}
+            // Calculate final Y positions
+            const adjustedPositions = new Map<string, number>();
+
+            for (const group of groups) {
+              if (group.length === 1) {
+                // Single node - keep original Y, no aggressive spreading
+                const node = group[0];
+                adjustedPositions.set(node.song.id, node.y);
+              } else {
+                // Multiple nodes in same column - spread them evenly within bounds
+                // Sort by original Y position
+                const sortedByY = [...group].sort((a, b) => a.y - b.y);
+
+                // Calculate available Y range (15-85 to avoid edge clustering)
+                const MIN_Y = 15;
+                const MAX_Y = 85;
+                const availableRange = MAX_Y - MIN_Y;
+
+                // Calculate spacing - distribute evenly across available range
+                // At zoom 1, use less spacing; at higher zoom, use more
+                const spacingMultiplier = 1 + (yAxisScale - 1) * 0.3; // Gentle increase
+                const idealSpacing = (availableRange / (sortedByY.length + 1)) * spacingMultiplier;
+                const actualSpacing = Math.min(idealSpacing, 15 * yAxisScale); // Cap spacing
+
+                // Calculate total height needed
+                const totalHeight = actualSpacing * (sortedByY.length - 1);
+
+                // Center the group around the average Y position, keeping within bounds
+                const avgY = sortedByY.reduce((sum, n) => sum + n.y, 0) / sortedByY.length;
+                let startY = avgY - totalHeight / 2;
+
+                // Adjust if exceeding bounds
+                if (startY < MIN_Y) startY = MIN_Y;
+                if (startY + totalHeight > MAX_Y) startY = MAX_Y - totalHeight;
+
+                sortedByY.forEach((node, index) => {
+                  const newY = startY + index * actualSpacing;
+                  adjustedPositions.set(node.song.id, Math.max(MIN_Y, Math.min(MAX_Y, newY)));
+                });
+              }
+            }
+
+            return layout.map((node) => {
+              const finalY = adjustedPositions.get(node.song.id) ?? node.y;
+
+              return (
+                <TimelineNode
+                  key={node.song.id}
+                  song={node.song}
+                  currentlyPlayingId={currentlyPlayingId}
+                  setCurrentlyPlayingId={setCurrentlyPlayingId}
+                  x={node.x}
+                  y={finalY}
+                  mousePos={mousePos}
+                  containerHeight={(containerRef.current?.clientHeight || 0) * yAxisScale}
+                  isSearched={node.song.id === searchedSongId}
+                  onRefreshUrl={onRefreshUrl ? () => onRefreshUrl(node.song.id) : undefined}
+                />
+              );
+            });
+          })()}
         </div>
       </div>
 

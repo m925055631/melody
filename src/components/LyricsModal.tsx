@@ -174,8 +174,8 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({
         {/* Right: Lyrics with Dynamic Highlighting */}
         <div
           ref={scrollRef}
-          className="w-full max-w-lg h-[60vh] overflow-y-auto no-scrollbar mask-image-gradient text-center space-y-6 px-4"
-          style={{ maskImage: 'linear-gradient(to bottom, transparent, black 10%, black 90%, transparent)' }}
+          className="w-full max-w-lg h-[60vh] overflow-y-auto no-scrollbar mask-image-gradient text-center space-y-6 px-4 pt-16"
+          style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 5%, black 90%, transparent)' }}
         >
           {!parsedLyrics ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
