@@ -65,3 +65,17 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated;
 
 -- Grant permissions on songs table
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.songs TO anon, authenticated;
+
+
+CREATE TABLE song_likes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  song_id UUID REFERENCES songs(id) ON DELETE CASCADE,
+  ip_address TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(song_id, ip_address)
+);
+
+ALTER TABLE song_likes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Enable all access for anon" ON song_likes
+  FOR ALL USING (true) WITH CHECK (true);
