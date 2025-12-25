@@ -14,7 +14,6 @@ import {
   getAllSongs,
   createSong,
   updateSong as updateSongInDB,
-  searchSongWithAI,
   fetchSongDetailsWithAI,
   enrichSongMetadata,
   trackVisit,
@@ -140,6 +139,8 @@ const App: React.FC = () => {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [currentlyPlayingId, setCurrentlyPlayingId] = useState<string | null>(null);
   const [searchedSongId, setSearchedSongId] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<Song[]>([]);
+  const [searchResultIndex, setSearchResultIndex] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
 
@@ -692,109 +693,110 @@ const App: React.FC = () => {
     fetchMissingDetails();
   }, [currentSong]);
 
-  const handleSearch = useCallback(async (query: string) => {
+  const handleSearch = useCallback((query: string) => {
     setIsSearching(true);
-    setSearchedSongId(null); // Reset highlight
+    setSearchedSongId(null);
+    setSearchResults([]);
+    setSearchResultIndex(0);
 
     const normalizedQuery = query.toLowerCase().trim();
-
-    // 1. Exact match - highest priority
-    const exactMatch = songs.find(s =>
-      s.title.toLowerCase() === normalizedQuery ||
-      s.artist.toLowerCase() === normalizedQuery
-    );
-
-    if (exactMatch) {
-      setSearchedSongId(exactMatch.id);
-      addToVisibleSongs(exactMatch);
-      setIsSearching(false);
-      return;
-    }
-
-    // 2. Multi-keyword match (e.g., "夜曲 周杰伦" -> title:"夜曲" + artist:"周杰伦")
     const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
 
-    if (keywords.length > 1) {
-      // Try to find a song where different keywords match title and artist
-      const multiKeywordMatch = songs.find(s => {
-        const titleLower = s.title.toLowerCase();
-        const artistLower = s.artist.toLowerCase();
+    // Collect all matching songs
+    let matches: Song[] = [];
 
-        // Check if at least one keyword matches title and another matches artist
-        const titleMatches = keywords.filter(k => titleLower.includes(k));
-        const artistMatches = keywords.filter(k => artistLower.includes(k));
-
-        // Match if we have keywords matching both title and artist
-        return titleMatches.length > 0 && artistMatches.length > 0;
-      });
-
-      if (multiKeywordMatch) {
-        setSearchedSongId(multiKeywordMatch.id);
-        addToVisibleSongs(multiKeywordMatch);
-        setIsSearching(false);
-        return;
-      }
-
-      // Alternative: all keywords match either title or artist
-      const allKeywordsMatch = songs.find(s => {
-        const combined = `${s.title} ${s.artist}`.toLowerCase();
-        return keywords.every(k => combined.includes(k));
-      });
-
-      if (allKeywordsMatch) {
-        setSearchedSongId(allKeywordsMatch.id);
-        addToVisibleSongs(allKeywordsMatch);
-        setIsSearching(false);
-        return;
-      }
-    }
-
-    // 3. Single keyword or substring match
-    const localMatch = songs.find(s =>
-      s.title.toLowerCase().includes(normalizedQuery) ||
-      s.artist.toLowerCase().includes(normalizedQuery)
+    // 1. Check if query exactly matches an artist name - return all songs by that artist
+    const exactArtistMatch = songs.filter(s =>
+      s.artist.toLowerCase() === normalizedQuery
     );
+    if (exactArtistMatch.length > 0) {
+      matches = exactArtistMatch;
+    } else {
+      // 2. Multi-keyword search (e.g., "夜曲 周杰伦" -> title + artist)
+      if (keywords.length > 1) {
+        const multiKeywordMatches = songs.filter(s => {
+          const titleLower = s.title.toLowerCase();
+          const artistLower = s.artist.toLowerCase();
+          const titleMatches = keywords.filter(k => titleLower.includes(k));
+          const artistMatches = keywords.filter(k => artistLower.includes(k));
+          return titleMatches.length > 0 && artistMatches.length > 0;
+        });
 
-    if (localMatch) {
-      setSearchedSongId(localMatch.id);
-      addToVisibleSongs(localMatch);
-      setIsSearching(false);
-      return;
-    }
-
-    // 4. AI search as last resort
-    const aiResult = await searchSongWithAI(query);
-
-    if (aiResult) {
-      const exists = songs.some(s => s.title === aiResult.title && s.artist === aiResult.artist);
-      if (!exists) {
-        try {
-          const createdSong = await createSong(aiResult);
-          setSongs(prev => [...prev, createdSong].sort((a, b) =>
-            new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
-          ));
-          setSearchedSongId(createdSong.id);
-          addToVisibleSongs(createdSong);
-        } catch (error) {
-          console.error('Error saving AI-generated song to Supabase:', error);
-          setSongs(prev => [...prev, aiResult].sort((a, b) =>
-            new Date(a.releaseDate).getTime() - new Date(b.releaseDate).getTime()
-          ));
-          setSearchedSongId(aiResult.id);
-        }
-      } else {
-        const existing = songs.find(s => s.title === aiResult.title && s.artist === aiResult.artist);
-        if (existing) {
-          setSearchedSongId(existing.id);
-          addToVisibleSongs(existing);
+        if (multiKeywordMatches.length > 0) {
+          matches = multiKeywordMatches;
+        } else {
+          // All keywords match combined title + artist
+          const allKeywordsMatches = songs.filter(s => {
+            const combined = `${s.title} ${s.artist}`.toLowerCase();
+            return keywords.every(k => combined.includes(k));
+          });
+          matches = allKeywordsMatches;
         }
       }
+
+      // 3. If still no matches, try fuzzy title/artist match
+      if (matches.length === 0) {
+        // Find all songs where title OR artist contains query
+        const fuzzyMatches = songs.filter(s =>
+          s.title.toLowerCase().includes(normalizedQuery) ||
+          s.artist.toLowerCase().includes(normalizedQuery)
+        );
+
+        // Sort: exact title match first, then title contains, then artist contains
+        matches = fuzzyMatches.sort((a, b) => {
+          const aTitle = a.title.toLowerCase();
+          const bTitle = b.title.toLowerCase();
+          const aArtist = a.artist.toLowerCase();
+          const bArtist = b.artist.toLowerCase();
+
+          // Exact title match first
+          if (aTitle === normalizedQuery && bTitle !== normalizedQuery) return -1;
+          if (bTitle === normalizedQuery && aTitle !== normalizedQuery) return 1;
+
+          // Title starts with query
+          if (aTitle.startsWith(normalizedQuery) && !bTitle.startsWith(normalizedQuery)) return -1;
+          if (bTitle.startsWith(normalizedQuery) && !aTitle.startsWith(normalizedQuery)) return 1;
+
+          // Title contains query
+          if (aTitle.includes(normalizedQuery) && !bTitle.includes(normalizedQuery)) return -1;
+          if (bTitle.includes(normalizedQuery) && !aTitle.includes(normalizedQuery)) return 1;
+
+          // Artist contains query last
+          if (aArtist.includes(normalizedQuery) && !bArtist.includes(normalizedQuery)) return 1;
+          if (bArtist.includes(normalizedQuery) && !aArtist.includes(normalizedQuery)) return -1;
+
+          return 0;
+        });
+      }
+    }
+
+    if (matches.length > 0) {
+      setSearchResults(matches);
+      setSearchResultIndex(0);
+      setSearchedSongId(matches[0].id);
+      // Add all matches to visible songs
+      matches.forEach(song => addToVisibleSongs(song));
     } else {
-      alert("暂未找到或收录此歌曲。\nSong not found.");
+      alert("未找到匹配的歌曲。\nNo matching songs found.");
     }
 
     setIsSearching(false);
   }, [songs, addToVisibleSongs]);
+
+  // Navigate between search results
+  const navigateSearchResult = useCallback((direction: 'prev' | 'next') => {
+    if (searchResults.length <= 1) return;
+
+    let newIndex: number;
+    if (direction === 'next') {
+      newIndex = (searchResultIndex + 1) % searchResults.length;
+    } else {
+      newIndex = (searchResultIndex - 1 + searchResults.length) % searchResults.length;
+    }
+
+    setSearchResultIndex(newIndex);
+    setSearchedSongId(searchResults[newIndex].id);
+  }, [searchResults, searchResultIndex]);
 
 
 
@@ -930,7 +932,13 @@ const App: React.FC = () => {
         />
 
         {/* Header / Search */}
-        <SearchBar onSearch={handleSearch} isSearching={isSearching} />
+        <SearchBar
+          onSearch={handleSearch}
+          isSearching={isSearching}
+          searchResultCount={searchResults.length}
+          currentSearchIndex={searchResultIndex}
+          onNavigate={navigateSearchResult}
+        />
 
         {/* Visitor Stats */}
         <VisitorStats totalVisits={visitorStats.totalVisits} activeUsers={visitorStats.activeUsers} />
