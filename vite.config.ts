@@ -12,11 +12,15 @@ export default defineConfig(({ mode }) => {
       // Expose the API_KEY to the client-side code
       'process.env.API_KEY': JSON.stringify(env.API_KEY),
     },
+    esbuild: {
+      // Remove console.log in production builds
+      drop: mode === 'production' ? ['console', 'debugger'] : [],
+    },
     server: {
-      // Proxy API requests to local dev server
+      port: 5173,
       proxy: {
         '/api': {
-          target: 'http://localhost:8788',
+          target: 'http://localhost:8787',
           changeOrigin: true,
         }
       }

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, ChevronUp, Download, Check, Loader2, SkipForward } from 'lucide-react';
 import type { Song } from '../types';
 
@@ -7,15 +7,15 @@ interface BottomPlayerBarProps {
   isPlaying: boolean;
   onPlayToggle: () => void;
   onOpenLyrics: () => void;
-  onNextSong?: () => void;
+  onNext?: () => void;
   currentTime?: number;
   duration?: number;
   onSeek?: (time: number) => void;
+  onRefreshUrl?: () => Promise<string | null>;
 }
 
-// Format seconds to mm:ss
 const formatTime = (seconds: number): string => {
-  if (!seconds || isNaN(seconds)) return '0:00';
+  if (!seconds || !isFinite(seconds)) return '0:00';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -26,106 +26,134 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
   isPlaying,
   onPlayToggle,
   onOpenLyrics,
-  onNextSong,
+  onNext,
   currentTime = 0,
   duration = 0,
-  onSeek
+  onSeek,
+  onRefreshUrl
 }) => {
-  const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'success'>('idle');
-  const [isDragging, setIsDragging] = useState(false);
-  const progressRef = useRef<HTMLDivElement>(null);
-
-  // Calculate time position from mouse/touch event - MUST be before any early returns
-  const calculateSeekTime = useCallback((clientX: number): number => {
-    if (!progressRef.current || !duration) return 0;
-    const rect = progressRef.current.getBoundingClientRect();
-    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return percent * duration;
-  }, [duration]);
-
-  // Early return AFTER all hooks
-  if (!currentSong) return null;
+  const [downloadState, setDownloadState] = useState<'idle' | 'refreshing' | 'downloading' | 'success'>('idle');
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekTime, setSeekTime] = useState(0);
+  const progressBarRef = useRef<HTMLDivElement>(null);
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const displayTime = isSeeking ? seekTime : currentTime;
 
-  // Handle click on progress bar
-  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (onSeek && duration > 0) {
-      const seekTime = calculateSeekTime(e.clientX);
-      onSeek(seekTime);
-    }
-  };
+  // useEffect must always be called before any early returns
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isSeeking || !progressBarRef.current || !onSeek || duration === 0) return;
 
-  // Handle drag start
-  const handleDragStart = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    setIsDragging(true);
+      const rect = progressBarRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const percentage = Math.max(0, Math.min(1, x / rect.width));
+      const newTime = percentage * duration;
 
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    if (onSeek && duration > 0) {
-      onSeek(calculateSeekTime(clientX));
-    }
+      setSeekTime(newTime);
+    };
 
-    // Add global listeners
-    const handleMove = (moveEvent: MouseEvent | TouchEvent) => {
-      const moveClientX = 'touches' in moveEvent ? moveEvent.touches[0].clientX : moveEvent.clientX;
-      if (onSeek && duration > 0) {
-        onSeek(calculateSeekTime(moveClientX));
+    const handleMouseUp = () => {
+      if (isSeeking && onSeek) {
+        onSeek(seekTime);
       }
+      setIsSeeking(false);
     };
 
-    const handleUp = () => {
-      setIsDragging(false);
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', handleUp);
-      document.removeEventListener('touchmove', handleMove);
-      document.removeEventListener('touchend', handleUp);
-    };
+    if (isSeeking) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+    }
 
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', handleUp);
-    document.addEventListener('touchmove', handleMove);
-    document.addEventListener('touchend', handleUp);
-  };
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isSeeking, seekTime, onSeek, duration]);
+
+  if (!currentSong) return null;
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
 
     if (!currentSong.audioUrl || downloadState !== 'idle') return;
 
+    let audioUrl = currentSong.audioUrl;
+
     try {
+      // Check if URL might be expired (CTFile URLs expire after 24 hours)
+      if (onRefreshUrl && currentSong.audioUrlUpdatedAt) {
+        const updatedAt = new Date(currentSong.audioUrlUpdatedAt).getTime();
+        const now = Date.now();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+        if (now - updatedAt >= TWENTY_FOUR_HOURS) {
+          setDownloadState('refreshing');
+          console.log('[Download] URL expired, refreshing...');
+          const newUrl = await onRefreshUrl();
+          if (newUrl) {
+            audioUrl = newUrl;
+            console.log('[Download] URL refreshed successfully');
+          } else {
+            throw new Error('无法刷新下载链接');
+          }
+        }
+      }
+
       setDownloadState('downloading');
 
-      // Fetch the audio file
-      const response = await fetch(currentSong.audioUrl);
+      const response = await fetch(audioUrl);
       const blob = await response.blob();
 
-      // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${currentSong.artist} - ${currentSong.title}.mp3`;
+      link.download = `${currentSong.artist} - ${currentSong.title}.flac`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
 
-      // Show success state
       setDownloadState('success');
-
-      // Reset after 2 seconds
-      setTimeout(() => {
-        setDownloadState('idle');
-      }, 2000);
+      setTimeout(() => setDownloadState('idle'), 2000);
     } catch (error) {
       console.error('Download failed:', error);
       setDownloadState('idle');
     }
   };
 
+  const handleProgressBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (!progressBarRef.current || !onSeek || duration === 0) return;
+
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, x / rect.width));
+    const newTime = percentage * duration;
+
+    onSeek(newTime);
+  };
+
+  const handleProgressBarMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!progressBarRef.current || duration === 0) return;
+
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, x / rect.width));
+    const hoverTime = percentage * duration;
+
+    setSeekTime(hoverTime);
+  };
+
+  const handleProgressBarMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    if (duration === 0) return;
+    setIsSeeking(true);
+  };
+
   const getDownloadIcon = () => {
     switch (downloadState) {
+      case 'refreshing':
       case 'downloading':
         return <Loader2 size={18} className="animate-spin" />;
       case 'success':
@@ -139,6 +167,8 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
     const base = "w-9 h-9 rounded-full flex items-center justify-center transition-all duration-300 relative group/download";
 
     switch (downloadState) {
+      case 'refreshing':
+        return `${base} bg-slate-700 text-yellow-400 animate-pulse`;
       case 'downloading':
         return `${base} bg-slate-700 text-neon-accent animate-pulse`;
       case 'success':
@@ -152,36 +182,12 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
     <div
       className="fixed bottom-0 left-0 w-full z-[60] px-4 pb-4 pt-2"
     >
-      <div className="max-w-3xl mx-auto">
-        {/* Progress Bar - Above the player bar */}
+      <div
+        className="max-w-3xl mx-auto bg-slate-900/70 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden"
+      >
+        {/* Top Section: Info & Main Controls */}
         <div
-          ref={progressRef}
-          className={`relative h-1.5 bg-slate-700/50 rounded-full mb-2 cursor-pointer group ${isDragging ? 'h-2' : 'hover:h-2'} transition-all`}
-          onClick={handleProgressClick}
-          onMouseDown={handleDragStart}
-          onTouchStart={handleDragStart}
-        >
-          {/* Progress Fill */}
-          <div
-            className="absolute top-0 left-0 h-full bg-gradient-to-r from-neon-accent to-sky-400 rounded-full transition-all"
-            style={{ width: `${progress}%` }}
-          />
-          {/* Drag Handle */}
-          <div
-            className={`absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-lg shadow-black/30 transition-all ${isDragging ? 'scale-125' : 'opacity-0 group-hover:opacity-100 scale-100'}`}
-            style={{ left: `calc(${progress}% - 7px)` }}
-          />
-        </div>
-
-        {/* Time Display */}
-        <div className="flex justify-between text-xs text-slate-400 mb-2 px-1">
-          <span>{formatTime(currentTime)}</span>
-          <span>{formatTime(duration)}</span>
-        </div>
-
-        {/* Main Player Bar */}
-        <div
-          className="bg-slate-900/70 backdrop-blur-xl border border-slate-700/50 rounded-2xl shadow-2xl flex items-center justify-between p-3 cursor-pointer group hover:bg-slate-800/80 transition-colors"
+          className="flex items-center justify-between p-3 cursor-pointer group hover:bg-slate-800/80 transition-colors"
           onClick={onOpenLyrics}
         >
           {/* Left: Info */}
@@ -200,23 +206,21 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
           </div>
 
           {/* Right: Controls */}
-          <div className="flex items-center gap-2 sm:gap-3 pr-2">
-            {/* Download Button - Only show if song has audio */}
+          <div className="flex items-center gap-3 pr-2">
+            {/* Download Button */}
             {currentSong.audioUrl && (
               <button
                 onClick={handleDownload}
                 disabled={downloadState !== 'idle'}
                 className={getDownloadButtonClasses()}
-                title={downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '下载完成!' : '下载歌曲'}
+                title={downloadState === 'refreshing' ? '刷新链接中...' : downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '下载完成!' : '下载歌曲'}
               >
                 {getDownloadIcon()}
 
-                {/* Tooltip */}
                 <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-slate-800 text-xs text-white rounded opacity-0 group-hover/download:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  {downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '完成!' : '下载'}
+                  {downloadState === 'refreshing' ? '刷新链接...' : downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '完成!' : '下载'}
                 </span>
 
-                {/* Success ripple effect */}
                 {downloadState === 'success' && (
                   <span className="absolute inset-0 rounded-full bg-green-400/30 animate-ping" />
                 )}
@@ -234,21 +238,80 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
               {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
             </button>
 
-            {/* Next Song Button */}
-            {onNextSong && (
+            {/* Next Track Button */}
+            {onNext && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onNextSong();
+                  onNext();
                 }}
-                className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-neon-accent flex items-center justify-center transition-all hover:scale-105 active:scale-95"
+                className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-neon-accent flex items-center justify-center transition-all hover:scale-105 active:scale-95 relative group/next"
                 title="下一首"
               >
-                <SkipForward size={18} fill="currentColor" />
+                <SkipForward size={18} />
+                <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-slate-800 text-xs text-white rounded opacity-0 group-hover/next:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                  下一首
+                </span>
               </button>
             )}
           </div>
         </div>
+
+        {/* Progress Bar Section */}
+        {duration > 0 ? (
+          <div
+            className="px-4 pb-3 pt-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              {/* Current Time */}
+              <span className="text-xs text-slate-400 font-mono w-10 text-right">
+                {formatTime(displayTime)}
+              </span>
+
+              {/* Progress Bar */}
+              <div
+                ref={progressBarRef}
+                className="flex-1 h-1.5 bg-slate-700/50 rounded-full cursor-pointer group/progress relative"
+                onClick={handleProgressBarClick}
+                onMouseMove={handleProgressBarMouseMove}
+                onMouseDown={handleProgressBarMouseDown}
+              >
+                {/* Filled Progress */}
+                <div
+                  className="h-full bg-gradient-to-r from-neon-accent to-sky-400 rounded-full transition-all relative"
+                  style={{ width: `${isSeeking ? (seekTime / duration) * 100 : progress}%` }}
+                >
+                  {/* Seek Handle */}
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg opacity-0 group-hover/progress:opacity-100 transition-opacity" />
+                </div>
+
+                {/* Hover Preview Line */}
+                <div
+                  className="absolute top-0 h-full w-0.5 bg-white/30 opacity-0 group-hover/progress:opacity-100 transition-opacity pointer-events-none"
+                  style={{
+                    left: isSeeking
+                      ? `${(seekTime / duration) * 100}%`
+                      : undefined
+                  }}
+                />
+              </div>
+
+              {/* Duration */}
+              <span className="text-xs text-slate-400 font-mono w-10">
+                {formatTime(duration)}
+              </span>
+            </div>
+          </div>
+        ) : (
+          /* Loading State - Show when audio is still loading */
+          <div className="px-4 pb-3 pt-1">
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 size={14} className="animate-spin text-neon-accent" />
+              <span className="text-xs text-slate-400">请求播放中，请稍后...</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

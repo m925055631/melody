@@ -1,6 +1,8 @@
 // Backend Proxy Service
 // All backend operations go through Cloudflare Worker API
 
+import { ctfileRateLimiter } from '../utils/rateLimiter';
+
 const API_URL = import.meta.env.VITE_API_URL || "/api/ai";
 
 // Helper function to call Worker API
@@ -43,7 +45,7 @@ export const searchSongWithAI = async (query: string): Promise<Song | null> => {
 
         if (result?.found && result?.song) {
             return {
-                id: `ai-${Date.now()}`,
+                id: crypto.randomUUID(),
                 title: result.song.title,
                 artist: result.song.artist,
                 releaseDate: result.song.releaseDate,
@@ -136,11 +138,21 @@ interface SongRecord {
     cover_url: string;
     description?: string;
     audio_url?: string;
-    lyrics?: string;
     file_id?: string;
     audio_url_updated_at?: string;
+    lyrics?: string;
     created_at?: string;
     updated_at?: string;
+}
+
+export function isAudioUrlExpired(song: Song): boolean {
+    if (!song.audioUrl || !song.audioUrlUpdatedAt) return true;
+
+    const updatedAt = new Date(song.audioUrlUpdatedAt).getTime();
+    const now = new Date().getTime();
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+    return (now - updatedAt) >= TWENTY_FOUR_HOURS;
 }
 
 function recordToSong(record: SongRecord): Song {
@@ -153,9 +165,9 @@ function recordToSong(record: SongRecord): Song {
         coverUrl: record.cover_url,
         description: record.description,
         audioUrl: record.audio_url,
-        lyrics: record.lyrics,
         fileId: record.file_id,
-        audioUrlUpdatedAt: record.audio_url_updated_at
+        audioUrlUpdatedAt: record.audio_url_updated_at,
+        lyrics: record.lyrics
     };
 }
 
@@ -170,9 +182,9 @@ function songToRecord(song: Partial<Song>): Partial<SongRecord> {
     if (song.coverUrl) record.cover_url = song.coverUrl;
     if (song.description !== undefined) record.description = song.description;
     if (song.audioUrl !== undefined) record.audio_url = song.audioUrl;
-    if (song.lyrics !== undefined) record.lyrics = song.lyrics;
     if (song.fileId !== undefined) record.file_id = song.fileId;
     if (song.audioUrlUpdatedAt !== undefined) record.audio_url_updated_at = song.audioUrlUpdatedAt;
+    if (song.lyrics !== undefined) record.lyrics = song.lyrics;
 
     return record;
 }
@@ -225,23 +237,15 @@ export async function listMusicFiles(): Promise<CTFileItem[]> {
 }
 
 export async function getPlayableUrl(fileKey: string): Promise<string | null> {
-    try {
-        return await callWorkerAPI("getPlayableUrl", { fileKey });
-    } catch (error) {
-        console.error(`Failed to get playable URL for ${fileKey}:`, error);
-        return null;
-    }
-}
-
-// Refresh an expired audio URL and update both database and local song
-export async function refreshAudioUrl(songId: string, fileId: string): Promise<{ audioUrl: string; audioUrlUpdatedAt: string } | null> {
-    try {
-        const result = await callWorkerAPI("refreshAudioUrl", { songId, fileId });
-        return result;
-    } catch (error) {
-        console.error(`Failed to refresh audio URL for song ${songId}:`, error);
-        return null;
-    }
+    // Use rate limiter to prevent "请求过于频繁" errors
+    return ctfileRateLimiter.enqueue(async () => {
+        try {
+            return await callWorkerAPI("getPlayableUrl", { fileKey });
+        } catch (error) {
+            console.error(`Failed to get playable URL for ${fileKey}:`, error);
+            return null;
+        }
+    });
 }
 
 // ============================================================================
@@ -262,5 +266,33 @@ export async function getVisitorStats(): Promise<{ totalVisits: number; activeUs
     } catch (error) {
         console.error("Failed to get visitor stats:", error);
         return { totalVisits: 0, activeUsers: 0 };
+    }
+}
+
+// ============================================================================
+// Song Like Exports
+// ============================================================================
+
+export async function likeSong(songId: string): Promise<{ liked: boolean; alreadyLiked: boolean; newPopularity: number }> {
+    try {
+        const result = await callWorkerAPI("likeSong", { songId });
+        return {
+            liked: result.liked ?? false,
+            alreadyLiked: result.alreadyLiked ?? false,
+            newPopularity: result.newPopularity ?? 0
+        };
+    } catch (error) {
+        console.error("Failed to like song:", error);
+        return { liked: false, alreadyLiked: false, newPopularity: 0 };
+    }
+}
+
+export async function checkLiked(songId: string): Promise<boolean> {
+    try {
+        const result = await callWorkerAPI("checkLiked", { songId });
+        return result.liked ?? false;
+    } catch (error) {
+        console.error("Failed to check like status:", error);
+        return false;
     }
 }

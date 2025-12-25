@@ -1,33 +1,102 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Loader2, Music, RefreshCw, Download, Check } from 'lucide-react';
+import { X, Loader2, Music, RefreshCw, Download, Check, Heart } from 'lucide-react';
 import type { Song } from '../types';
-import { fetchSongDetailsWithAI } from '../services/backendProxy';
+import { fetchSongDetailsWithAI, likeSong, checkLiked } from '../services/backendProxy';
+import { parseLRC, getCurrentLyricIndex, isLRCFormat, convertPlainToLyrics, type LyricLine } from '../utils/lrcParser';
 
 interface LyricsModalProps {
   isOpen: boolean;
   onClose: () => void;
   song: Song | null;
+  currentTime?: number; // 当前播放时间（秒）
   onUpdateLyrics?: (songId: string, lyrics: string) => void;
 }
 
-export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song, onUpdateLyrics }) => {
+export const LyricsModal: React.FC<LyricsModalProps> = ({
+  isOpen,
+  onClose,
+  song,
+  currentTime = 0,
+  onUpdateLyrics
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [downloadState, setDownloadState] = useState<'idle' | 'success'>('idle');
+  const currentLineRef = useRef<HTMLParagraphElement>(null);
 
+  // Like button state
+  const [isLiked, setIsLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
+  const [isLiking, setIsLiking] = useState(false);
+
+  // Parse lyrics into structured format
+  const parsedLyrics: LyricLine[] | null = song?.lyrics
+    ? (isLRCFormat(song.lyrics)
+      ? parseLRC(song.lyrics)
+      : convertPlainToLyrics(song.lyrics))
+    : null;
+
+  // Get current lyric index based on play time
+  const currentIndex = parsedLyrics ? getCurrentLyricIndex(parsedLyrics, currentTime) : -1;
+
+  // Auto-scroll to current lyric line
   useEffect(() => {
-    // Reset scroll when song changes or opens
+    if (currentLineRef.current && scrollRef.current) {
+      const container = scrollRef.current;
+      const element = currentLineRef.current;
+
+      // Calculate scroll position to center the current line
+      const containerHeight = container.clientHeight;
+      const elementTop = element.offsetTop;
+      const elementHeight = element.clientHeight;
+
+      const scrollTo = elementTop - containerHeight / 2 + elementHeight / 2;
+
+      container.scrollTo({
+        top: scrollTo,
+        behavior: 'smooth'
+      });
+    }
+  }, [currentIndex]);
+
+  // Reset scroll when song changes or opens
+  useEffect(() => {
     if (isOpen && scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
   }, [isOpen, song?.id]);
 
-  if (!isOpen || !song) return null;
+  // Check if user has already liked this song and get current like count
+  useEffect(() => {
+    if (isOpen && song) {
+      setLikeCount(song.popularity);
+      checkLiked(song.id).then(liked => {
+        setIsLiked(liked);
+      });
+    }
+  }, [isOpen, song]);
 
-  // Formatting lyrics
-  const lyricsLines = song.lyrics
-    ? song.lyrics.split('\n').filter(line => line.trim() !== '')
-    : null;
+  // Handle like button click
+  const handleLike = async () => {
+    if (!song || isLiking || isLiked) return;
+
+    setIsLiking(true);
+    try {
+      const result = await likeSong(song.id);
+      if (result.liked) {
+        setIsLiked(true);
+        setLikeCount(result.newPopularity);
+      } else if (result.alreadyLiked) {
+        setIsLiked(true);
+      }
+    } catch (error) {
+      console.error('Failed to like song:', error);
+    } finally {
+      setIsLiking(false);
+    }
+  };
+
+  if (!isOpen || !song) return null;
 
   // Re-search lyrics with AI
   const handleResearchLyrics = async () => {
@@ -61,38 +130,50 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
 
-    // Show success feedback
     setDownloadState('success');
     setTimeout(() => setDownloadState('idle'), 2000);
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-slate-900 md:bg-slate-900/95 transition-opacity duration-300">
-      {/* Background Ambience - Optimized for mobile to prevent flickering */}
+    <div className="fixed inset-0 z-[100] flex flex-col bg-slate-900/95 backdrop-blur-2xl transition-opacity duration-300">
+      {/* Background Ambience */}
       <div
-        className="absolute inset-0 opacity-30 pointer-events-none bg-cover bg-center blur-xl md:blur-3xl scale-110 md:scale-125"
-        style={{
-          backgroundImage: `url(${song.coverUrl})`,
-          transform: 'translateZ(0)',
-          willChange: 'auto',
-          backfaceVisibility: 'hidden'
-        }}
+        className="absolute inset-0 opacity-30 pointer-events-none bg-cover bg-center blur-3xl scale-125"
+        style={{ backgroundImage: `url(${song.coverUrl})` }}
       />
 
-      {/* Header - Compact on mobile */}
-      <div className="relative z-10 flex items-center justify-between p-4 md:p-6">
-        <div className="flex flex-col min-w-0 flex-1 mr-3">
-          <h2 className="text-lg md:text-2xl font-bold text-white tracking-tight truncate">{song.title}</h2>
-          <p className="text-neon-accent/80 font-medium text-sm md:text-base truncate">{song.artist}</p>
+      {/* Header */}
+      <div className="relative z-10 flex items-center justify-between p-6">
+        <div className="flex flex-col">
+          <h2 className="text-2xl font-bold text-white tracking-tight">{song.title}</h2>
+          <div className="flex items-center gap-3">
+            <p className="text-neon-accent/80 font-medium">{song.artist}</p>
+            <span className="text-slate-400 text-sm">•</span>
+            <button
+              onClick={handleLike}
+              disabled={isLiking || isLiked}
+              className={`flex items-center gap-1.5 text-sm transition-all duration-300 group ${isLiked
+                ? 'text-rose-400 cursor-default'
+                : 'text-slate-400 hover:text-rose-400'
+                }`}
+              title={isLiked ? '已喜欢' : '点击喜欢'}
+            >
+              <Heart
+                size={16}
+                className={`transition-all duration-300 ${isLiked ? 'fill-rose-400' : 'group-hover:scale-110'} ${isLiking ? 'animate-pulse' : ''}`}
+              />
+              <span className="font-medium">{likeCount}</span>
+            </button>
+          </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center gap-2 md:gap-3 shrink-0">
+        <div className="flex items-center gap-3">
           {/* Re-search Button */}
           <button
             onClick={handleResearchLyrics}
             disabled={isSearching}
-            className={`p-2 md:p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${isSearching
+            className={`p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${isSearching
               ? 'bg-neon-accent/20 text-neon-accent'
               : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
               }`}
@@ -105,10 +186,10 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
           </button>
 
           {/* Download Button */}
-          {lyricsLines && (
+          {parsedLyrics && (
             <button
               onClick={handleDownloadLyrics}
-              className={`p-2 md:p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${downloadState === 'success'
+              className={`p-2.5 rounded-full transition-all duration-300 flex items-center gap-2 ${downloadState === 'success'
                 ? 'bg-green-500/20 text-green-400 scale-105'
                 : 'bg-white/10 hover:bg-white/20 text-white hover:text-neon-accent'
                 }`}
@@ -131,11 +212,11 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
         </div>
       </div>
 
-      {/* Content - Larger lyrics area */}
-      <div className="flex-1 overflow-hidden relative z-10 flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8 px-4 md:p-6">
+      {/* Content */}
+      <div className="flex-1 overflow-hidden relative z-10 flex flex-col md:flex-row items-center justify-center gap-8 p-6">
 
-        {/* Left: Album Art (Hidden on small screens if needed, but good for aesthetics) */}
-        <div className="hidden md:block w-72 lg:w-80 h-72 lg:h-80 shrink-0 shadow-2xl rounded-2xl overflow-hidden border border-white/10 relative group">
+        {/* Left: Album Art */}
+        <div className="hidden md:block w-80 h-80 shrink-0 shadow-2xl rounded-2xl overflow-hidden border border-white/10 relative group">
           <img src={song.coverUrl} alt="Album Art" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
           <div className="absolute bottom-4 left-4 text-white/80 text-sm">
@@ -143,39 +224,54 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({ isOpen, onClose, song,
           </div>
         </div>
 
-        {/* Right: Lyrics - Expanded height for better reading */}
+        {/* Right: Lyrics with Dynamic Highlighting */}
         <div
           ref={scrollRef}
-          className="w-full max-w-lg h-[calc(100vh-140px)] md:h-[75vh] overflow-y-auto no-scrollbar text-center space-y-5 md:space-y-6 px-4"
-          style={{
-            maskImage: 'linear-gradient(to bottom, transparent, black 8%, black 92%, transparent)',
-            WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 8%, black 92%, transparent)',
-            transform: 'translateZ(0)',
-            willChange: 'scroll-position'
-          }}
+          className="w-full max-w-lg h-[60vh] overflow-y-auto no-scrollbar mask-image-gradient text-center space-y-6 px-4 pt-16"
+          style={{ maskImage: 'linear-gradient(to bottom, transparent 0%, black 5%, black 90%, transparent)' }}
         >
-          {!lyricsLines ? (
+          {!parsedLyrics ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
               <Loader2 className="animate-spin text-neon-accent" size={32} />
               <p>AI 正在搜索歌词...</p>
               <p className="text-xs text-slate-600">Powered by Gemini</p>
             </div>
           ) : (
-            lyricsLines.map((line, idx) => (
-              <p
-                key={idx}
-                className="text-lg md:text-xl text-slate-300 hover:text-white transition-colors duration-300 leading-relaxed font-light"
-              >
-                {line}
-              </p>
-            ))
-          )}
+            <>
+              {parsedLyrics.map((line, idx) => {
+                const isCurrent = idx === currentIndex;
+                const isPast = idx < currentIndex;
+                const isUpcoming = idx > currentIndex && idx <= currentIndex + 2;
 
-          {lyricsLines && (
-            <div className="pt-12 pb-24 text-slate-600 text-xs flex flex-col items-center gap-2">
-              <Music size={12} />
-              <span>End of Lyrics</span>
-            </div>
+                return (
+                  <p
+                    key={idx}
+                    ref={isCurrent ? currentLineRef : null}
+                    className={`
+                      text-lg md:text-xl leading-relaxed font-light transition-all duration-500
+                      ${isCurrent
+                        ? 'text-white font-medium scale-110 text-shadow-glow'
+                        : isPast
+                          ? 'text-slate-500'
+                          : isUpcoming
+                            ? 'text-slate-400'
+                            : 'text-slate-600'
+                      }
+                    `}
+                    style={{
+                      textShadow: isCurrent ? '0 0 20px rgba(56, 189, 248, 0.5)' : 'none'
+                    }}
+                  >
+                    {line.text}
+                  </p>
+                );
+              })}
+
+              <div className="pt-12 pb-24 text-slate-600 text-xs flex flex-col items-center gap-2">
+                <Music size={12} />
+                <span>End of Lyrics</span>
+              </div>
+            </>
           )}
         </div>
       </div>

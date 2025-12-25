@@ -87,6 +87,61 @@ If not found or outside the year range, set found to false and song to null.`;
 }
 
 async function handleFetchLyrics(apiKey: string, title: string, artist: string) {
+    // First, try to fetch synced LRC lyrics from LrcLib (free LRC lyrics API)
+    try {
+        const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
+        console.log('[LrcLib] Searching for:', title, '-', artist);
+
+        const lrcResponse = await fetch(searchUrl, {
+            headers: {
+                'User-Agent': 'MelodyTimeline/1.0 (https://melody-timeline.pages.dev)'
+            }
+        });
+
+        if (lrcResponse.ok) {
+            const results = await lrcResponse.json();
+
+            if (results && results.length > 0) {
+                // Find the best match (prefer synced lyrics)
+                const bestMatch = results.find((r: any) => r.syncedLyrics) || results[0];
+
+                if (bestMatch) {
+                    const lyrics = bestMatch.syncedLyrics || bestMatch.plainLyrics;
+
+                    if (lyrics) {
+                        console.log('[LrcLib] Found lyrics for:', title);
+
+                        // Generate visual prompt with AI since we got lyrics from LrcLib
+                        let visualPrompt = `${title}_${artist}`.replace(/\s+/g, '_');
+                        try {
+                            const aiResult = await callOpenRouter(
+                                apiKey,
+                                `For the song "${title}" by "${artist}", provide a short, vivid English visual description (under 5 words) of the song's mood/vibe for an image generator. Return JSON: {"visualPrompt": "keywords"}`,
+                                "You are a music visualization expert."
+                            );
+                            if (aiResult?.visualPrompt) {
+                                visualPrompt = aiResult.visualPrompt;
+                            }
+                        } catch (e) {
+                            console.log('[LrcLib] Could not get visual prompt from AI, using default');
+                        }
+
+                        return {
+                            lyrics: lyrics,
+                            visualPrompt: visualPrompt,
+                            source: 'lrclib'
+                        };
+                    }
+                }
+            }
+        }
+
+        console.log('[LrcLib] No synced lyrics found, falling back to AI');
+    } catch (error) {
+        console.error('[LrcLib] Error fetching lyrics:', error);
+    }
+
+    // Fallback to AI-generated lyrics (without timestamps)
     const prompt = `Provide the full lyrics (in original language) for the song "${title}" by "${artist}". 
 Also provide a short, vivid, English visual description of the album cover or the song's vibe (under 5 words) to be used as a seed for an image generator.
 Return JSON in this format:
@@ -95,11 +150,17 @@ Return JSON in this format:
   "visualPrompt": "short_visual_keywords"
 }`;
 
-    return await callOpenRouter(
+    const result = await callOpenRouter(
         apiKey,
         prompt,
         "You are a music lyrics expert."
     );
+
+    if (result) {
+        result.source = 'ai';
+    }
+
+    return result;
 }
 
 async function handleEnrichMetadata(apiKey: string, title: string, artist: string) {
@@ -256,6 +317,73 @@ async function handleGetStats(env: Env) {
 }
 
 // ============================================================================
+// Song Like Functions
+// ============================================================================
+
+async function handleLikeSong(env: Env, songId: string, ip: string) {
+    try {
+        // Check if this IP has already liked this song
+        const existing = await callSupabase(
+            env,
+            `song_likes?select=id&song_id=eq.${songId}&ip_address=eq.${encodeURIComponent(ip)}`
+        );
+
+        if (existing && existing.length > 0) {
+            // Already liked - get current popularity
+            const song = await callSupabase(env, `songs?select=popularity&id=eq.${songId}`);
+            return {
+                success: true,
+                liked: false, // Already liked before
+                alreadyLiked: true,
+                newPopularity: song?.[0]?.popularity || 0
+            };
+        }
+
+        // Insert like record
+        await callSupabase(env, "song_likes", {
+            method: "POST",
+            body: JSON.stringify({
+                song_id: songId,
+                ip_address: ip
+            })
+        });
+
+        // Increment popularity
+        const song = await callSupabase(env, `songs?select=popularity&id=eq.${songId}`);
+        const currentPopularity = song?.[0]?.popularity || 0;
+        const newPopularity = currentPopularity + 1;
+
+        await callSupabase(env, `songs?id=eq.${songId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ popularity: newPopularity })
+        });
+
+        return {
+            success: true,
+            liked: true,
+            alreadyLiked: false,
+            newPopularity: newPopularity
+        };
+    } catch (error) {
+        console.error('Error liking song:', error);
+        throw error;
+    }
+}
+
+async function handleCheckLiked(env: Env, songId: string, ip: string) {
+    try {
+        const existing = await callSupabase(
+            env,
+            `song_likes?select=id&song_id=eq.${songId}&ip_address=eq.${encodeURIComponent(ip)}`
+        );
+        return { liked: existing && existing.length > 0 };
+    } catch (error) {
+        console.error('Error checking like status:', error);
+        return { liked: false };
+    }
+}
+
+// ============================================================================
 // CTFile Functions
 // ============================================================================
 
@@ -408,6 +536,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
             case "getStats":
                 result = await handleGetStats(env);
                 break;
+
+            // Song Like Operations
+            case "likeSong": {
+                const likeIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+                result = await handleLikeSong(env, data.songId, likeIp);
+                break;
+            }
+
+            case "checkLiked": {
+                const checkIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+                result = await handleCheckLiked(env, data.songId, checkIp);
+                break;
+            }
 
             default:
                 return new Response(

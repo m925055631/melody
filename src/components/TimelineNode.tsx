@@ -1,128 +1,136 @@
 
-import React, { useState, memo } from 'react';
+import React, { useState } from 'react';
 import type { Song } from '../types';
 import { SongCard } from './SongCard';
 
 interface TimelineNodeProps {
   song: Song;
   currentlyPlayingId: string | null;
-  onPlayToggle: (id: string) => void;
+  setCurrentlyPlayingId: (id: string | null) => void;
   x: number;
   y: number;
   isSearched: boolean;
-  zoomLevel: number;
+  onRefreshUrl?: () => Promise<string | null>;
 }
 
-// Memoized component to prevent unnecessary re-renders
-export const TimelineNode: React.FC<TimelineNodeProps> = memo(({
+const TimelineNodeComponent: React.FC<TimelineNodeProps> = ({
   song,
   currentlyPlayingId,
-  onPlayToggle,
+  setCurrentlyPlayingId,
   x,
   y,
   isSearched,
-  zoomLevel
+  onRefreshUrl
 }) => {
   const [isHovered, setIsHovered] = useState(false);
 
   const isPlaying = currentlyPlayingId === song.id;
+
+  // Use the passed-in Y percentage directly
   const bottomPercent = y;
 
-  // Scale compensation: nodes and cards always stay same size
-  const nodeInverseScale = 1 / zoomLevel;
-  const cardInverseScale = 1 / zoomLevel;
-
   // Decide card direction based on vertical position
-  const cardPosition = bottomPercent > 40 ? 'down' : 'up';
+  // If node is high up (> 55%), show card downwards to avoid clipping
+  const cardPosition = bottomPercent > 55 ? 'down' : 'up';
 
   const handlePlayToggle = () => {
-    if (!song.audioUrl) return;
-    onPlayToggle(song.id);
+    // Prevent playback if no audio URL
+    if (!song.audioUrl) {
+      return;
+    }
+
+    if (isPlaying) {
+      setCurrentlyPlayingId(null);
+    } else {
+      setCurrentlyPlayingId(song.id);
+    }
   };
 
   return (
     <div
-      className={`absolute ${isHovered ? 'z-[100]' : 'z-10'}`}
+      // Critical change: z-index must be very high on hover to overlay neighbors
+      className={`absolute transition-all ease-out ${isHovered ? 'z-[100]' : 'z-10'}`}
       style={{
         left: `${x}px`,
         bottom: `${bottomPercent}%`,
-        // Smaller padding for hover area - just enough to reach the card
-        padding: '20px',
-        margin: '-20px'
+        transitionDuration: '0.3s',
+        transitionProperty: 'z-index'
       }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {/* The Visual Node (Dot & Line) - Capped at 300% zoom */}
-      <div
-        className="flex flex-col items-center cursor-pointer group"
-        style={{ transform: `scale(${nodeInverseScale})` }}
-      >
-        {/* Title - Hidden by default, shows when zoomed in enough (zoomLevel > 1.5) or when searched */}
+      {/* The Visual Node (Dot & Line) */}
+      <div className="flex flex-col items-center cursor-pointer group">
+        {/* Title (Small, initially visible) - Hide if card is open to avoid clutter */}
         <span
           className={`
             mb-3 text-sm font-medium tracking-wide whitespace-nowrap 
             transition-all duration-300 select-none pointer-events-none drop-shadow-lg
-            ${isHovered && !isSearched ? 'opacity-0 -translate-y-2' : ''}
-            ${isPlaying && !isHovered ? 'text-cyan-300 font-bold' : ''}
-            ${isSearched ? 'text-cyan-300 font-bold' : 'text-white'}
+            ${isHovered ? 'opacity-0 -translate-y-2' : 'opacity-95 text-white'}
+            ${isPlaying ? 'text-cyan-300 opacity-100 font-bold' : ''}
           `}
-          style={{
-            // Always show title when searched, otherwise based on zoom level
-            opacity: isHovered && !isSearched ? 0 : (isSearched ? 1 : (zoomLevel > 1.5 ? Math.min(0.95, (zoomLevel - 1.5) / 1) : 0))
-          }}
         >
           {song.title}
         </span>
 
-        {/* The Beautified Dot - Simplified for performance */}
+        {/* The Simplified Dot - Optimized for performance */}
         <div className="relative flex items-center justify-center">
-          {/* Search Highlight - Simple ring instead of blur */}
+          {/* Search Highlight - Simpler glow without blur */}
           {isSearched && (
-            <div className="absolute w-12 h-12 rounded-full border-2 border-cyan-400/50 animate-ping" />
+            <div className="absolute w-12 h-12 rounded-full bg-cyan-400/40 animate-pulse" />
           )}
 
-          {/* Outer Glow Ring - No blur */}
+          {/* Outer Ring - Only on hover/playing, no blur */}
           <div className={`
              absolute rounded-full transition-all duration-300
-             ${isHovered || isPlaying ? 'w-8 h-8 bg-neon-accent/20' : 'w-0 h-0 opacity-0'}
-             ${isSearched ? 'w-10 h-10 bg-cyan-400/30' : ''}
+             ${isHovered || isPlaying ? 'w-8 h-8 bg-neon-accent/30' : 'w-0 h-0 opacity-0'}
+             ${isSearched ? 'w-10 h-10 bg-cyan-400/50' : ''}
              ${!song.audioUrl ? 'opacity-30' : ''}
           `} />
 
-          {/* Inner Halo - Simplified */}
-          <div className={`
-             absolute rounded-full transition-all duration-200 border
-             ${isSearched ? 'w-6 h-6 border-cyan-400' : ''}
-             ${!isSearched && (isHovered || isPlaying) ? 'w-5 h-5 border-neon-accent/50' : ''}
-             ${!isSearched && !isHovered && !isPlaying ? 'w-0 h-0 opacity-0' : ''}
-             ${!song.audioUrl ? 'opacity-30' : ''}
-          `} />
-
-          {/* Core Dot - Reduced shadow size */}
+          {/* Core Dot - Simplified shadows */}
           <div
             className={`
-              relative w-3 h-3 rounded-full transition-all duration-200
-              ${isSearched ? 'w-4 h-4 bg-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.8)]' : ''}
-              ${!isSearched && isHovered ? 'bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)]' : ''}
-              ${!isSearched && !isHovered ? 'bg-cyan-200 shadow-[0_0_6px_rgba(165,243,252,0.6)]' : ''}
-              ${isPlaying ? 'bg-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.8)]' : ''}
+              relative w-3 h-3 rounded-full 
+              transition-all duration-200 
+              ${isSearched ? 'w-4 h-4 bg-cyan-400 scale-125' : ''}
+              ${!isSearched && isHovered ? 'bg-white scale-125' : ''}
+              ${!isSearched && !isHovered ? 'bg-cyan-200' : ''}
+              ${isPlaying ? 'bg-cyan-400 scale-110' : ''}
               ${!song.audioUrl ? 'opacity-40' : 'opacity-100'}
             `}
+            style={{
+              boxShadow: isSearched || isPlaying
+                ? '0 0 12px rgba(34, 211, 238, 0.8)'
+                : isHovered
+                  ? '0 0 10px rgba(255, 255, 255, 0.6)'
+                  : '0 0 6px rgba(165, 243, 252, 0.5)'
+            }}
           />
         </div>
       </div>
 
-      {/* Expanded Details Card - Always show when searched or hovered */}
-      <div style={{ transform: `scale(${cardInverseScale})`, transformOrigin: 'top center' }}>
+      {/* Expanded Details Card - Only render when hovered or playing for performance */}
+      {(isHovered || isPlaying) && (
         <SongCard
           song={song}
           isPlaying={isPlaying}
           onPlayToggle={handlePlayToggle}
-          isHovered={isHovered || isSearched}
+          isHovered={isHovered}
           position={cardPosition}
+          onRefreshUrl={onRefreshUrl}
         />
-      </div>
+      )}
     </div>
+  );
+};
+// Memoize component
+export const TimelineNode = React.memo(TimelineNodeComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.song.id === nextProps.song.id &&
+    prevProps.currentlyPlayingId === nextProps.currentlyPlayingId &&
+    prevProps.isSearched === nextProps.isSearched &&
+    prevProps.x === nextProps.x &&
+    prevProps.y === nextProps.y
   );
 });

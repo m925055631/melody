@@ -1,5 +1,5 @@
 
-import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 
 // Using a royalty-free generic placeholder sound for demonstration
 const DEFAULT_AUDIO_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
@@ -8,77 +8,82 @@ interface AudioPlayerProps {
   isPlaying: boolean;
   volume: number;
   src?: string;
+  loop?: boolean;
   onEnded?: () => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
 }
 
-export interface AudioPlayerHandle {
-  seek: (time: number) => void;
-  getCurrentTime: () => number;
-  getDuration: () => number;
-}
+export const AudioPlayer: React.FC<AudioPlayerProps> = ({
+  isPlaying,
+  volume,
+  src,
+  loop = false,
+  onEnded,
+  onTimeUpdate
+}) => {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioSrc = src || DEFAULT_AUDIO_URL;
 
-export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-  ({ isPlaying, volume, src, onEnded, onTimeUpdate }, ref) => {
-    const audioRef = useRef<HTMLAudioElement>(null);
-    const audioSrc = src || DEFAULT_AUDIO_URL;
-
-    // Expose methods to parent component
-    useImperativeHandle(ref, () => ({
-      seek: (time: number) => {
-        if (audioRef.current) {
-          audioRef.current.currentTime = time;
+  useEffect(() => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(error => {
+            console.log("Autoplay prevented or interrupted:", error);
+          });
         }
-      },
-      getCurrentTime: () => audioRef.current?.currentTime || 0,
-      getDuration: () => audioRef.current?.duration || 0,
-    }));
-
-    useEffect(() => {
-      if (audioRef.current) {
-        if (isPlaying) {
-          if (!audioSrc || audioSrc === DEFAULT_AUDIO_URL) {
-            console.log("Audio source is invalid or default, skipping play");
-            return;
-          }
-          // Reset play logic when source changes if needed, but HTML audio handles src change well usually
-          const playPromise = audioRef.current.play();
-          if (playPromise !== undefined) {
-            playPromise.catch(error => {
-              if (error.name === 'NotAllowedError') {
-                console.warn("Autoplay prevented: User interaction required");
-              } else {
-                console.error("Playback failed:", error);
-              }
-            });
-          }
-        } else {
-          audioRef.current.pause();
-        }
+      } else {
+        audioRef.current.pause();
       }
-    }, [isPlaying, audioSrc]);
+    }
+  }, [isPlaying, audioSrc]);
 
-    useEffect(() => {
-      if (audioRef.current) {
-        audioRef.current.volume = volume;
-      }
-    }, [volume]);
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
+
+  // Handle time updates
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
 
     const handleTimeUpdate = () => {
-      if (audioRef.current && onTimeUpdate) {
-        onTimeUpdate(audioRef.current.currentTime, audioRef.current.duration || 0);
+      if (onTimeUpdate) {
+        onTimeUpdate(audio.currentTime, audio.duration || 0);
       }
     };
 
-    return (
-      <audio
-        ref={audioRef}
-        src={audioSrc}
-        loop={false}
-        onEnded={onEnded}
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleTimeUpdate}
-      />
-    );
+    const handleLoadedMetadata = () => {
+      if (onTimeUpdate) {
+        onTimeUpdate(audio.currentTime, audio.duration || 0);
+      }
+    };
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    };
+  }, [onTimeUpdate]);
+
+  return (
+    <audio
+      ref={audioRef}
+      src={audioSrc}
+      loop={loop}
+      onEnded={onEnded}
+    />
+  );
+};
+
+// Export seek helper for parent components
+export const seekAudio = (audioElement: HTMLAudioElement | null, time: number) => {
+  if (audioElement) {
+    audioElement.currentTime = time;
   }
-);
+};

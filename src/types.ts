@@ -8,6 +8,8 @@ export interface Song {
   coverUrl: string;
   description?: string;
   audioUrl?: string; // URL for the audio file (uploaded by user)
+  fileId?: string; // CTFile file ID
+  audioUrlUpdatedAt?: string; // ISO Date when the audio URL was last updated
   lyrics?: string; // Lyrics content
   fileId?: string; // CTFile file ID (without 'f' prefix)
   audioUrlUpdatedAt?: string; // ISO timestamp of when audioUrl was last updated

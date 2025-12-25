@@ -4,14 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:api": "node dev-server.mjs",
+    "dev": "vite --port=5173",
+    "dev:api": "wrangler pages dev functions/api --port=8787",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.88.0",
+    "@tanstack/react-virtual": "^3.13.13",
     "lucide-react": "^0.555.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
@@ -31,7 +32,6 @@
     "tailwindcss": "^4.1.17",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4",
-    "wrangler": "^4.56.0"
+    "vite": "^7.2.4"
   }
 }
