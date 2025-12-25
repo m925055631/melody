@@ -13,45 +13,18 @@
 ## 技术栈
 
 - **前端**: React + TypeScript + Vite + Tailwind CSS
-- **后端**: Cloudflare Pages Functions (Worker)
+- **后端**: Cloudflare Pages Functions
 - **数据库**: Supabase
 - **AI**: OpenRouter (Gemini)
 - **存储**: CTFile 云盘
 
-## 安全架构
-
-所有敏感操作都通过 Cloudflare Worker 代理，API 密钥不会暴露给浏览器：
-
-```
-浏览器 → Worker API (/api/ai) → Supabase / CTFile / OpenRouter
-         ↑ 密钥只在这里使用
-```
-
 ## 本地开发
 
-```bash
-# 安装依赖
-npm install
-
-# 启动开发服务器
-npm run dev
-```
+详细说明见 [DEV_SETUP.md](./DEV_SETUP.md)
 
 ## 部署
 
 详细部署说明见 [DEPLOYMENT.md](./DEPLOYMENT.md)
-
-### 快速步骤
-
-1. 推送代码到 GitHub
-2. 在 Cloudflare Pages 连接仓库
-3. 配置环境变量（不加 VITE_ 前缀）:
-   - `OPENROUTER_API_KEY`
-   - `SUPABASE_URL`
-   - `SUPABASE_ANON_KEY`
-   - `CTFILE_FOLDER_ID`
-   - `CTFILE_TOKEN`
-4. 部署完成
 
 ## 项目结构
 

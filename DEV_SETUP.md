@@ -6,6 +6,12 @@ The `--proxy` flag in Wrangler Pages is deprecated, so we use Vite's proxy inste
 
 ## Running the Development Servers
 
+### Install Independence
+
+```bash
+npm install
+```
+
 ### Terminal 1: Start API Server (Wrangler)
 
 ```bash
