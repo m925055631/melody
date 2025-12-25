@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import type { Song } from '../types';
 import { TimelineNode } from './TimelineNode';
 import { getYearsWithSongs, PIXELS_PER_YEAR, TIMELINE_PADDING } from '../constants';
@@ -216,16 +216,77 @@ export const Timeline: React.FC<TimelineProps> = ({
   // ---------------------------------------------------------------------------
   // Auto-Scroll to Searched Song
   // ---------------------------------------------------------------------------
+
+  // Helper to get adjusted Y position (same logic as rendering)
+  const getAdjustedYPosition = useCallback((songId: string): number | null => {
+    const targetNode = layout.find(n => n.song.id === songId);
+    if (!targetNode) return null;
+
+    // Replicate the collision avoidance logic from render
+    const X_THRESHOLD = 30;
+    const sortedNodes = [...layout].sort((a, b) => a.x - b.x);
+
+    const groups: typeof layout[] = [];
+    let currentGroup: typeof layout = [];
+
+    for (const node of sortedNodes) {
+      if (currentGroup.length === 0) {
+        currentGroup.push(node);
+      } else {
+        const lastNode = currentGroup[currentGroup.length - 1];
+        if (Math.abs(node.x - lastNode.x) < X_THRESHOLD) {
+          currentGroup.push(node);
+        } else {
+          groups.push(currentGroup);
+          currentGroup = [node];
+        }
+      }
+    }
+    if (currentGroup.length > 0) {
+      groups.push(currentGroup);
+    }
+
+    // Find the group containing our target
+    for (const group of groups) {
+      const targetInGroup = group.find(n => n.song.id === songId);
+      if (!targetInGroup) continue;
+
+      if (group.length === 1) {
+        return targetInGroup.y;
+      } else {
+        const sortedByY = [...group].sort((a, b) => a.y - b.y);
+        const MIN_Y = 15;
+        const MAX_Y = 85;
+        const availableRange = MAX_Y - MIN_Y;
+        const spacingMultiplier = 1 + (yAxisScale - 1) * 0.3;
+        const idealSpacing = (availableRange / (sortedByY.length + 1)) * spacingMultiplier;
+        const actualSpacing = Math.min(idealSpacing, 15 * yAxisScale);
+        const totalHeight = actualSpacing * (sortedByY.length - 1);
+        const avgY = sortedByY.reduce((sum, n) => sum + n.y, 0) / sortedByY.length;
+        let startY = avgY - totalHeight / 2;
+        if (startY < MIN_Y) startY = MIN_Y;
+        if (startY + totalHeight > MAX_Y) startY = MAX_Y - totalHeight;
+
+        const targetIndex = sortedByY.findIndex(n => n.song.id === songId);
+        if (targetIndex >= 0) {
+          const newY = startY + targetIndex * actualSpacing;
+          return Math.max(MIN_Y, Math.min(MAX_Y, newY));
+        }
+      }
+    }
+    return targetNode.y;
+  }, [layout, yAxisScale]);
+
   useEffect(() => {
     if (searchedSongId) {
       console.log('[Timeline Auto-Scroll] Triggered for:', searchedSongId);
       if (containerRef.current) {
-        // Find the ACTUAL calculated position of the song from layout
         const targetNode = layout.find(n => n.song.id === searchedSongId);
+        const adjustedY = getAdjustedYPosition(searchedSongId);
 
-        console.log('[Timeline Auto-Scroll] Target node found:', !!targetNode, targetNode);
+        console.log('[Timeline Auto-Scroll] Target node found:', !!targetNode, 'adjustedY:', adjustedY);
 
-        if (targetNode) {
+        if (targetNode && adjustedY !== null) {
           const container = containerRef.current;
 
           // Center horizontally
@@ -238,12 +299,20 @@ export const Timeline: React.FC<TimelineProps> = ({
           const halfScreenY = containerHeight / 2;
 
           // Node is positioned from bottom (bottom: y%)
-          // Convert to top position: (100 - y)% from top
-          const topPercent = 100 - targetNode.y;
+          // Convert to pixel position from top
+          const topPercent = 100 - adjustedY;
           const actualY = (topPercent / 100) * scaledContentHeight;
           const targetScrollY = actualY - halfScreenY;
 
-          console.log('[Timeline Auto-Scroll] Scrolling to:', { x: targetScrollX, y: targetScrollY });
+          console.log('[Timeline Auto-Scroll] Scrolling to:', {
+            x: targetScrollX,
+            y: targetScrollY,
+            containerHeight,
+            scaledContentHeight,
+            adjustedY,
+            topPercent,
+            actualY
+          });
 
           container.scrollTo({
             left: Math.max(0, targetScrollX),
@@ -253,7 +322,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         }
       }
     }
-  }, [searchedSongId, layout, yAxisScale]); // Re-run if ID changes, Layout changes, or Y scale changes
+  }, [searchedSongId, layout, yAxisScale, getAdjustedYPosition]);
 
   // ---------------------------------------------------------------------------
   // Initial Scroll to Year 2000 (Only Once - After Songs are Loaded)
