@@ -11,6 +11,7 @@ interface BottomPlayerBarProps {
   currentTime?: number;
   duration?: number;
   onSeek?: (time: number) => void;
+  onRefreshUrl?: () => Promise<string | null>;
 }
 
 const formatTime = (seconds: number): string => {
@@ -28,9 +29,10 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
   onNext,
   currentTime = 0,
   duration = 0,
-  onSeek
+  onSeek,
+  onRefreshUrl
 }) => {
-  const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'success'>('idle');
+  const [downloadState, setDownloadState] = useState<'idle' | 'refreshing' | 'downloading' | 'success'>('idle');
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekTime, setSeekTime] = useState(0);
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -76,16 +78,37 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
 
     if (!currentSong.audioUrl || downloadState !== 'idle') return;
 
+    let audioUrl = currentSong.audioUrl;
+
     try {
+      // Check if URL might be expired (CTFile URLs expire after 24 hours)
+      if (onRefreshUrl && currentSong.audioUrlUpdatedAt) {
+        const updatedAt = new Date(currentSong.audioUrlUpdatedAt).getTime();
+        const now = Date.now();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+        if (now - updatedAt >= TWENTY_FOUR_HOURS) {
+          setDownloadState('refreshing');
+          console.log('[Download] URL expired, refreshing...');
+          const newUrl = await onRefreshUrl();
+          if (newUrl) {
+            audioUrl = newUrl;
+            console.log('[Download] URL refreshed successfully');
+          } else {
+            throw new Error('无法刷新下载链接');
+          }
+        }
+      }
+
       setDownloadState('downloading');
 
-      const response = await fetch(currentSong.audioUrl);
+      const response = await fetch(audioUrl);
       const blob = await response.blob();
 
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${currentSong.artist} - ${currentSong.title}.mp3`;
+      link.download = `${currentSong.artist} - ${currentSong.title}.flac`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -130,6 +153,7 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
 
   const getDownloadIcon = () => {
     switch (downloadState) {
+      case 'refreshing':
       case 'downloading':
         return <Loader2 size={18} className="animate-spin" />;
       case 'success':
@@ -143,6 +167,8 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
     const base = "w-9 h-9 rounded-full flex items-center justify-center transition-all duration-300 relative group/download";
 
     switch (downloadState) {
+      case 'refreshing':
+        return `${base} bg-slate-700 text-yellow-400 animate-pulse`;
       case 'downloading':
         return `${base} bg-slate-700 text-neon-accent animate-pulse`;
       case 'success':
@@ -187,12 +213,12 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
                 onClick={handleDownload}
                 disabled={downloadState !== 'idle'}
                 className={getDownloadButtonClasses()}
-                title={downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '下载完成!' : '下载歌曲'}
+                title={downloadState === 'refreshing' ? '刷新链接中...' : downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '下载完成!' : '下载歌曲'}
               >
                 {getDownloadIcon()}
 
                 <span className="absolute -top-10 left-1/2 -translate-x-1/2 px-2 py-1 bg-slate-800 text-xs text-white rounded opacity-0 group-hover/download:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-                  {downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '完成!' : '下载'}
+                  {downloadState === 'refreshing' ? '刷新链接...' : downloadState === 'downloading' ? '下载中...' : downloadState === 'success' ? '完成!' : '下载'}
                 </span>
 
                 {downloadState === 'success' && (

@@ -12,6 +12,7 @@ interface TimelineNodeProps {
   mousePos: { x: number, y: number } | null;
   containerHeight: number;
   isSearched: boolean;
+  onRefreshUrl?: () => Promise<string | null>;
 }
 
 const TimelineNodeComponent: React.FC<TimelineNodeProps> = ({
@@ -22,7 +23,8 @@ const TimelineNodeComponent: React.FC<TimelineNodeProps> = ({
   y,
   mousePos,
   containerHeight,
-  isSearched
+  isSearched,
+  onRefreshUrl
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -186,6 +188,7 @@ const TimelineNodeComponent: React.FC<TimelineNodeProps> = ({
         onPlayToggle={handlePlayToggle}
         isHovered={isHovered}
         position={cardPosition}
+        onRefreshUrl={onRefreshUrl}
       />
     </div>
   );

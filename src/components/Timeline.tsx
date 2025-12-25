@@ -10,6 +10,7 @@ interface TimelineProps {
   currentlyPlayingId: string | null;
   setCurrentlyPlayingId: (id: string | null) => void;
   searchedSongId: string | null;
+  onRefreshUrl?: (songId: string) => Promise<string | null>;
 }
 
 interface PositionedNode {
@@ -22,7 +23,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   songs,
   currentlyPlayingId,
   setCurrentlyPlayingId,
-  searchedSongId
+  searchedSongId,
+  onRefreshUrl
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const pixelsPerYear = PIXELS_PER_YEAR; // Fixed zoom level
@@ -506,19 +508,36 @@ export const Timeline: React.FC<TimelineProps> = ({
             minHeight: '100%'
           }}
         >
-          {layout.map((node) => (
-            <TimelineNode
-              key={node.song.id}
-              song={node.song}
-              currentlyPlayingId={currentlyPlayingId}
-              setCurrentlyPlayingId={setCurrentlyPlayingId}
-              x={node.x}
-              y={node.y} // Keep original Y percentage, scaling is done via container height
-              mousePos={mousePos}
-              containerHeight={(containerRef.current?.clientHeight || 0) * yAxisScale}
-              isSearched={node.song.id === searchedSongId}
-            />
-          ))}
+          {layout.map((node) => {
+            // Dynamic Y spreading: when zoomed in, spread nodes away from center (50%)
+            // This makes closely spaced nodes separate more at higher zoom levels
+            const centerY = 50;
+            const distanceFromCenter = node.y - centerY;
+
+            // Apply non-linear spreading based on zoom level
+            // At yAxisScale = 1, no extra spreading
+            // At yAxisScale > 1, nodes spread outward from center
+            const spreadFactor = Math.pow(yAxisScale, 0.5); // Square root for gentler spreading
+            const adjustedY = centerY + distanceFromCenter * spreadFactor;
+
+            // Clamp to valid range
+            const finalY = Math.max(5, Math.min(95, adjustedY));
+
+            return (
+              <TimelineNode
+                key={node.song.id}
+                song={node.song}
+                currentlyPlayingId={currentlyPlayingId}
+                setCurrentlyPlayingId={setCurrentlyPlayingId}
+                x={node.x}
+                y={finalY} // Apply dynamic Y spreading based on zoom
+                mousePos={mousePos}
+                containerHeight={(containerRef.current?.clientHeight || 0) * yAxisScale}
+                isSearched={node.song.id === searchedSongId}
+                onRefreshUrl={onRefreshUrl ? () => onRefreshUrl(node.song.id) : undefined}
+              />
+            );
+          })}
         </div>
       </div>
 

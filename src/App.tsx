@@ -982,6 +982,7 @@ const App: React.FC = () => {
               currentlyPlayingId={currentlyPlayingId}
               setCurrentlyPlayingId={playSongWithRefresh}
               searchedSongId={searchedSongId}
+              onRefreshUrl={refreshSongUrl}
             />
           )}
         </div>
@@ -1021,6 +1022,7 @@ const App: React.FC = () => {
           currentTime={currentTime}
           duration={duration}
           onSeek={handleSeek}
+          onRefreshUrl={currentlyPlayingId ? () => refreshSongUrl(currentlyPlayingId) : undefined}
         />
 
         {/* Audio Controller Logic (Hidden) */}

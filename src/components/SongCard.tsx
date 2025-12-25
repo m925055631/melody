@@ -10,6 +10,7 @@ interface SongCardProps {
   onPlayToggle: () => void;
   isHovered: boolean;
   position?: 'up' | 'down';
+  onRefreshUrl?: () => Promise<string | null>; // For refreshing expired URLs
 }
 
 export const SongCard: React.FC<SongCardProps> = ({
@@ -17,7 +18,8 @@ export const SongCard: React.FC<SongCardProps> = ({
   isPlaying,
   onPlayToggle,
   isHovered,
-  position = 'up'
+  position = 'up',
+  onRefreshUrl
 }) => {
   const isUp = position === 'up';
   const [isDownloading, setIsDownloading] = useState(false);
@@ -28,10 +30,30 @@ export const SongCard: React.FC<SongCardProps> = ({
     if (!song.audioUrl || isDownloading) return;
 
     setIsDownloading(true);
+    let audioUrl = song.audioUrl;
 
     try {
+      // Check if URL might be expired (CTFile URLs expire after 24 hours)
+      // If we have a refresh function and the song has audioUrlUpdatedAt, check expiration
+      if (onRefreshUrl && song.audioUrlUpdatedAt) {
+        const updatedAt = new Date(song.audioUrlUpdatedAt).getTime();
+        const now = Date.now();
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+        if (now - updatedAt >= TWENTY_FOUR_HOURS) {
+          console.log('[Download] URL expired, refreshing...');
+          const newUrl = await onRefreshUrl();
+          if (newUrl) {
+            audioUrl = newUrl;
+            console.log('[Download] URL refreshed successfully');
+          } else {
+            throw new Error('无法刷新下载链接');
+          }
+        }
+      }
+
       // Fetch the audio file
-      const response = await fetch(song.audioUrl);
+      const response = await fetch(audioUrl);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
