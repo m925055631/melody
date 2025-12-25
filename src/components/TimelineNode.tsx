@@ -14,7 +14,7 @@ interface TimelineNodeProps {
   isSearched: boolean;
 }
 
-export const TimelineNode: React.FC<TimelineNodeProps> = ({
+const TimelineNodeComponent: React.FC<TimelineNodeProps> = ({
   song,
   currentlyPlayingId,
   setCurrentlyPlayingId,
@@ -190,3 +190,13 @@ export const TimelineNode: React.FC<TimelineNodeProps> = ({
     </div>
   );
 };
+// Memoize component
+export const TimelineNode = React.memo(TimelineNodeComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.song.id === nextProps.song.id &&
+    prevProps.currentlyPlayingId === nextProps.currentlyPlayingId &&
+    prevProps.isSearched === nextProps.isSearched &&
+    prevProps.x === nextProps.x &&
+    prevProps.y === nextProps.y
+  );
+});

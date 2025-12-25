@@ -26,6 +26,112 @@ import {
 import { ctfileRateLimiter } from './utils/rateLimiter';
 import { Volume2, VolumeX, Shuffle, Repeat, Repeat1, Loader2 } from 'lucide-react';
 
+// ============================================================================
+// Standalone Repair Function - Call from browser console: window.repairMissingFileIds()
+// ============================================================================
+const extractSongInfoFromFilename = (filename: string): { artist: string; title: string } | null => {
+  const cleanName = filename.replace(/\.(flac|mp3|wav|m4a|ogg|wma)$/i, '');
+
+  // Try " - " first (standard format: Title - Artist)
+  let parts = cleanName.split(' - ');
+  if (parts.length >= 2) {
+    return { title: parts[0].trim(), artist: parts.slice(1).join(' - ').trim() };
+  }
+
+  // Try "-" without spaces (Format: Title-Artist)
+  parts = cleanName.split('-');
+  if (parts.length >= 2) {
+    return { title: parts[0].trim(), artist: parts.slice(1).join('-').trim() };
+  }
+
+  return null;
+};
+
+// One-time repair function to fix all songs missing fileId
+async function repairMissingFileIds(): Promise<void> {
+  console.log('🔧 Starting fileId repair...');
+
+  try {
+    // Step 1: Get all songs from database
+    const allSongs = await getAllSongs();
+    console.log(`📊 Total songs in database: ${allSongs.length}`);
+
+    // Step 2: Filter songs that need repair (have audioUrl but no fileId)
+    const songsNeedingRepair = allSongs.filter(s => s.audioUrl && !s.fileId);
+    console.log(`🔍 Songs needing fileId repair: ${songsNeedingRepair.length}`);
+
+    if (songsNeedingRepair.length === 0) {
+      console.log('✅ No songs need repair!');
+      return;
+    }
+
+    // Step 3: Get all files from CTFile
+    console.log('📁 Fetching files from CTFile...');
+    const files = await listMusicFiles();
+    console.log(`📁 Files in CTFile: ${files.length}`);
+
+    if (files.length === 0) {
+      console.log('❌ No files found in CTFile. Check CTFILE_TOKEN.');
+      return;
+    }
+
+    // Step 4: Match and repair
+    let repairedCount = 0;
+    let notFoundCount = 0;
+
+    for (const song of songsNeedingRepair) {
+      // Find matching file by exact title + artist
+      const matchingFile = files.find(file => {
+        const info = extractSongInfoFromFilename(file.name);
+        if (!info) return false;
+        return (
+          info.title.toLowerCase() === song.title.toLowerCase() &&
+          info.artist.toLowerCase() === song.artist.toLowerCase()
+        );
+      });
+
+      if (matchingFile) {
+        try {
+          // Get new playable URL
+          const audioUrl = await getPlayableUrl(matchingFile.key);
+          if (audioUrl) {
+            const audioUrlUpdatedAt = new Date().toISOString();
+
+            // Update database
+            await updateSongInDB(song.id, {
+              audioUrl,
+              fileId: matchingFile.key,
+              audioUrlUpdatedAt
+            });
+
+            repairedCount++;
+            console.log(`✅ Repaired: "${song.title}" - "${song.artist}" → fileId: ${matchingFile.key}`);
+          }
+        } catch (error) {
+          console.error(`❌ Failed to repair "${song.title}":`, error);
+        }
+      } else {
+        notFoundCount++;
+        console.log(`⚠️ No matching file for: "${song.title}" - "${song.artist}"`);
+      }
+    }
+
+    console.log('');
+    console.log('🎵 Repair Complete!');
+    console.log(`   ✅ Repaired: ${repairedCount}`);
+    console.log(`   ⚠️ No match found: ${notFoundCount}`);
+    console.log('');
+    console.log('💡 Refresh the page to see changes.');
+
+  } catch (error) {
+    console.error('❌ Repair failed:', error);
+  }
+}
+
+// Expose to window for console access
+(window as any).repairMissingFileIds = repairMissingFileIds;
+
+
 const App: React.FC = () => {
   // All songs from database
   const [songs, setSongs] = useState<Song[]>([]);
@@ -272,11 +378,20 @@ const App: React.FC = () => {
 
       try {
         console.log('Starting CTFile sync via Worker API...');
+        console.log(`[Sync Debug] Songs needing repair: ${songs.filter(s => s.audioUrl && !s.fileId).length}`);
 
         // Get files from CTFile via Worker
-        const files = await listMusicFiles();
-        if (files.length === 0) {
-          console.log('No music files found in CTFile');
+        let files;
+        try {
+          files = await listMusicFiles();
+          console.log(`[Sync Debug] listMusicFiles returned: ${JSON.stringify(files?.length ?? 'undefined')}`);
+        } catch (listError) {
+          console.error('[Sync Debug] listMusicFiles threw error:', listError);
+          return;
+        }
+
+        if (!files || files.length === 0) {
+          console.log('No music files found in CTFile (check CTFILE_TOKEN expiration)');
           return;
         }
 
@@ -290,12 +405,23 @@ const App: React.FC = () => {
         let updatedCount = 0;
         let apiCallCount = 0;
         const updatedSongs: Song[] = [];
+        let songsNeedingUpdate = 0;
 
         for (const song of currentSongs) {
           // Skip ONLY IF we have a valid audioUrl, a fileId, AND it's not expired
           if (song.audioUrl && song.fileId && !isAudioUrlExpired(song)) {
             updatedSongs.push(song);
             continue;
+          }
+
+          // This song needs update - log it for debugging
+          songsNeedingUpdate++;
+          const needsRepair = song.audioUrl && !song.fileId;
+          const isExpired = song.audioUrl && song.fileId && isAudioUrlExpired(song);
+          const hasNoAudio = !song.audioUrl;
+
+          if (needsRepair) {
+            console.log(`[Sync Debug] Song needs fileId repair: "${song.title}" - "${song.artist}"`);
           }
 
           // Find matching file
@@ -307,6 +433,21 @@ const App: React.FC = () => {
               info.artist.toLowerCase() === song.artist.toLowerCase()
             );
           });
+
+          if (!matchingFile && needsRepair) {
+            // Log why no match was found
+            console.log(`[Sync Debug] No matching file found for: "${song.title}" - "${song.artist}"`);
+            // Try to find partial matches for debugging
+            const partialMatches = files.filter(file => {
+              const info = extractSongInfoFromFilename(file.name);
+              if (!info) return false;
+              return info.title.toLowerCase().includes(song.title.toLowerCase().substring(0, 3)) ||
+                info.artist.toLowerCase().includes(song.artist.toLowerCase().substring(0, 3));
+            }).slice(0, 3);
+            if (partialMatches.length > 0) {
+              console.log(`[Sync Debug] Possible partial matches:`, partialMatches.map(f => f.name));
+            }
+          }
 
           if (matchingFile && apiCallCount < MAX_NEW_SONGS_PER_SYNC) {
             try {
@@ -342,6 +483,7 @@ const App: React.FC = () => {
           }
         }
 
+        console.log(`[Sync Debug] Phase 1 summary: ${songsNeedingUpdate} songs needed update, ${updatedCount} matched`);
         currentSongs = updatedSongs;
 
         // Phase 2: Import NEW songs from CTFile that don't exist in database

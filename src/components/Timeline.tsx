@@ -3,6 +3,7 @@ import type { Song } from '../types';
 import { TimelineNode } from './TimelineNode';
 import { getYearsWithSongs, PIXELS_PER_YEAR, TIMELINE_PADDING } from '../constants';
 import { Plus, Minus } from 'lucide-react';
+import { useThrottle } from '../hooks/useThrottle';
 
 interface TimelineProps {
   songs: Song[];
@@ -30,11 +31,11 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Generate years dynamically based on songs
   const YEARS = useMemo(() => {
     const years = getYearsWithSongs(songs);
-    console.log('[Timeline Debug] Years:', {
-      songsCount: songs.length,
-      yearsCount: years.length,
-      sampleYears: years.slice(0, 5)
-    });
+    // console.log('[Timeline Debug] Years:', {
+    //   songsCount: songs.length,
+    //   yearsCount: years.length,
+    //   sampleYears: years.slice(0, 5)
+    // });
     return years;
   }, [songs]);
 
@@ -215,12 +216,12 @@ export const Timeline: React.FC<TimelineProps> = ({
       });
     });
 
-    console.log('[Timeline] Uniform Y-axis layout:', {
-      totalSongs: songs.length,
-      totalWidth: monthDensityData.totalWidth,
-      positionedNodes: positionedNodes.length,
-      bandDistribution: bandCounters
-    });
+    // console.log('[Timeline] Uniform Y-axis layout:', {
+    //   totalSongs: songs.length,
+    //   totalWidth: monthDensityData.totalWidth,
+    //   positionedNodes: positionedNodes.length,
+    //   bandDistribution: bandCounters
+    // });
 
     return positionedNodes;
   }, [songs, monthDensityData]);
@@ -374,14 +375,19 @@ export const Timeline: React.FC<TimelineProps> = ({
   const handleMouseLeave = () => setIsDragging(false);
   const handleMouseUp = () => setIsDragging(false);
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    // Update mouse position for repulsion effect (relative to container)
+  // Mouse position update (throttled for performance)
+  const updateMousePosition = useThrottle((e: React.MouseEvent) => {
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left + containerRef.current.scrollLeft;
       const y = e.clientY - rect.top + containerRef.current.scrollTop;
       setMousePos({ x, y });
     }
+  }, 16); // 60fps
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    // Update mouse position (throttled)
+    updateMousePosition(e);
 
     // Handle dragging (both horizontal and vertical)
     if (!isDragging) return;

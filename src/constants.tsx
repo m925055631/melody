@@ -37,14 +37,14 @@ export function getYearsWithSongs(songs: Song[]): YearMarker[] {
     years.push({ year, label: String(year) });
   }
 
-  console.log('[getYearsWithSongs]', {
-    songsCount: songs.length,
-    minYear,
-    maxYear,
-    actualStartYear,
-    actualEndYear,
-    yearsGenerated: years.length
-  });
+  // console.log('[getYearsWithSongs]', {
+  //   songsCount: songs.length,
+  //   minYear,
+  //   maxYear,
+  //   actualStartYear,
+  //   actualEndYear,
+  //   yearsGenerated: years.length
+  // });
 
   return years;
 }
