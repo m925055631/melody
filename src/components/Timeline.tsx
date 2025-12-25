@@ -29,6 +29,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const pixelsPerYear = PIXELS_PER_YEAR; // Fixed zoom level
   const [yAxisScale, setYAxisScale] = useState(1); // Y-axis zoom scale (1 = normal)
+  const [scrollX, setScrollX] = useState(0); // Track horizontal scroll for fixed timeline
 
   // Generate years dynamically based on songs
   const YEARS = useMemo(() => {
@@ -362,6 +363,19 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
   }, []);
 
+  // Track horizontal scroll position for fixed timeline
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      setScrollX(container.scrollLeft);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Dragging Logic
   // ---------------------------------------------------------------------------
@@ -437,68 +451,6 @@ export const Timeline: React.FC<TimelineProps> = ({
           <div className="absolute bottom-[5%] w-full h-[1px] bg-gradient-to-r from-transparent via-neon-accent/20 to-transparent opacity-60 shadow-[0_0_15px_rgba(56,189,248,0.5)] blur-[0.5px]"></div>
         </div>
 
-        {/* Fixed Timeline Markers Layer - Not affected by Y-axis scaling */}
-        <div
-          className="absolute bottom-0 left-0 pointer-events-none"
-          style={{
-            width: `${totalWidth}px`,
-            height: '100%'
-          }}
-        >
-          {/* Years */}
-          {YEARS.map((marker) => {
-            // Get position from density-based layout (January of this year)
-            const monthKey = `${marker.year}-01`;
-            const offset = monthDensityData.xOffsets.get(monthKey);
-            const leftPos = offset ? offset.start : TIMELINE_PADDING;
-            return (
-              <div
-                key={marker.year}
-                className="absolute h-full flex flex-col justify-end pb-2 group"
-                style={{ left: `${leftPos}px` }}
-              >
-                <div className="h-[80%] w-[1px] bg-gradient-to-t from-slate-500/20 via-slate-500/5 to-transparent group-hover:from-neon-accent/30 transition-colors duration-700"></div>
-                <span className="
-                  font-mono text-6xl font-bold mt-4 -translate-x-1/2 select-none 
-                  text-slate-200/5 
-                  group-hover:text-neon-accent/20 
-                  drop-shadow-[0_0_5px_rgba(255,255,255,0.1)] 
-                  group-hover:drop-shadow-[0_0_15px_rgba(56,189,248,0.4)]
-                  transition-all duration-700
-                ">
-                  {marker.label}
-                </span>
-              </div>
-            );
-          })}
-
-          {/* Month Markers (shown when zoomed in) */}
-          {pixelsPerYear > 500 && YEARS.map((yearMarker) => {
-            const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
-            return monthNames.map((month) => {
-              const monthKey = `${yearMarker.year}-${month}`;
-              const offset = monthDensityData.xOffsets.get(monthKey);
-              const leftPos = offset ? offset.start + offset.width / 2 : TIMELINE_PADDING;
-
-              return (
-                <div
-                  key={`${yearMarker.year}-${month}`}
-                  className="absolute h-full flex flex-col justify-end pb-2"
-                  style={{ left: `${leftPos}px` }}
-                >
-                  <div className="h-[60%] w-[1px] bg-gradient-to-t from-slate-600/10 via-slate-600/5 to-transparent"></div>
-                  <span className="
-                    font-mono text-xs font-normal mt-2 -translate-x-1/2 select-none 
-                    text-slate-400/20
-                  ">
-                    {month}
-                  </span>
-                </div>
-              );
-            });
-          })}
-        </div>
-
         {/* Nodes Layer - Wrapped in scalable container */}
         <div
           className="relative"
@@ -541,7 +493,60 @@ export const Timeline: React.FC<TimelineProps> = ({
         </div>
       </div>
 
-      {/* Zoom Controls */}
+      {/* Fixed Timeline Axis - Stays at bottom, only moves with horizontal scroll */}
+      <div
+        className="fixed bottom-16 left-0 right-0 h-16 z-30 pointer-events-none overflow-hidden bg-gradient-to-t from-slate-950/90 via-slate-950/60 to-transparent"
+      >
+        <div
+          className="relative h-full"
+          style={{
+            width: `${totalWidth}px`,
+            transform: `translateX(${-scrollX}px)`
+          }}
+        >
+          {/* Years */}
+          {YEARS.map((marker) => {
+            const monthKey = `${marker.year}-01`;
+            const offset = monthDensityData.xOffsets.get(monthKey);
+            const leftPos = offset ? offset.start : TIMELINE_PADDING;
+            return (
+              <div
+                key={marker.year}
+                className="absolute h-full flex flex-col justify-end items-start pb-1"
+                style={{ left: `${leftPos}px` }}
+              >
+                <div className="h-[50%] w-[1px] bg-gradient-to-t from-slate-400/40 via-slate-400/20 to-transparent"></div>
+                <span className="font-mono text-lg font-bold mt-1 -translate-x-1/2 select-none text-slate-400/60">
+                  {marker.label}
+                </span>
+              </div>
+            );
+          })}
+
+          {/* Month Markers (shown when zoomed in) */}
+          {pixelsPerYear > 500 && YEARS.map((yearMarker) => {
+            const monthNames = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+            return monthNames.map((month) => {
+              const monthKey = `${yearMarker.year}-${month}`;
+              const offset = monthDensityData.xOffsets.get(monthKey);
+              const leftPos = offset ? offset.start + offset.width / 2 : TIMELINE_PADDING;
+
+              return (
+                <div
+                  key={`${yearMarker.year}-${month}`}
+                  className="absolute h-full flex flex-col justify-end items-start pb-1"
+                  style={{ left: `${leftPos}px` }}
+                >
+                  <div className="h-[30%] w-[1px] bg-gradient-to-t from-slate-500/30 via-slate-500/10 to-transparent"></div>
+                  <span className="font-mono text-xs font-normal mt-0.5 -translate-x-1/2 select-none text-slate-500/40">
+                    {month}
+                  </span>
+                </div>
+              );
+            });
+          })}
+        </div>
+      </div>
       <div className="fixed bottom-24 left-6 z-50 flex flex-col items-center gap-2 bg-slate-900/50 backdrop-blur-md p-2 rounded-full border border-slate-700 shadow-xl group hover:bg-slate-900/80 transition-colors">
         <button
           onClick={handleZoomIn}
