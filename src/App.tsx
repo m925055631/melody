@@ -234,7 +234,7 @@ const App: React.FC = () => {
       return;
     }
 
-    const MAX_VISIBLE = 200;
+    const MAX_VISIBLE = 300; // Increased - cards render lazily on hover
 
     if (songs.length <= MAX_VISIBLE) {
       // Show all if less than limit

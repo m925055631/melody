@@ -3,7 +3,6 @@ import type { Song } from '../types';
 import { TimelineNode } from './TimelineNode';
 import { getYearsWithSongs, PIXELS_PER_YEAR, TIMELINE_PADDING } from '../constants';
 import { Plus, Minus } from 'lucide-react';
-import { useThrottle } from '../hooks/useThrottle';
 
 interface TimelineProps {
   songs: Song[];
@@ -48,9 +47,6 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [startY, setStartY] = useState(0);
   const [scrollLeft, setScrollLeft] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
-
-  // Mouse position for magnetic repulsion effect
-  const [mousePos, setMousePos] = useState<{ x: number, y: number } | null>(null);
 
   // ---------------------------------------------------------------------------
   // Layout Calculation Engine (Memoized) - Non-Linear Density-Based X-Axis
@@ -378,20 +374,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   const handleMouseLeave = () => setIsDragging(false);
   const handleMouseUp = () => setIsDragging(false);
 
-  // Mouse position update (throttled for performance)
-  const updateMousePosition = useThrottle((e: React.MouseEvent) => {
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left + containerRef.current.scrollLeft;
-      const y = e.clientY - rect.top + containerRef.current.scrollTop;
-      setMousePos({ x, y });
-    }
-  }, 16); // 60fps
-
   const handleMouseMove = (e: React.MouseEvent) => {
-    // Update mouse position (throttled)
-    updateMousePosition(e);
-
     // Handle dragging (both horizontal and vertical)
     if (!isDragging) return;
     e.preventDefault();
@@ -528,8 +511,6 @@ export const Timeline: React.FC<TimelineProps> = ({
                   setCurrentlyPlayingId={setCurrentlyPlayingId}
                   x={node.x}
                   y={finalY}
-                  mousePos={mousePos}
-                  containerHeight={(containerRef.current?.clientHeight || 0) * yAxisScale}
                   isSearched={node.song.id === searchedSongId}
                   onRefreshUrl={onRefreshUrl ? () => onRefreshUrl(node.song.id) : undefined}
                 />
