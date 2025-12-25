@@ -158,7 +158,7 @@ export const SongCard: React.FC<SongCardProps> = ({
             <span>{song.releaseDate}</span>
             <span className="flex items-center gap-1 text-slate-300">
               <Music size={8} />
-              {song.popularity}K 热度
+              {song.popularity} 热度
             </span>
           </div>
 

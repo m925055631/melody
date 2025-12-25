@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Loader2, Music, RefreshCw, Download, Check } from 'lucide-react';
+import { X, Loader2, Music, RefreshCw, Download, Check, Heart } from 'lucide-react';
 import type { Song } from '../types';
-import { fetchSongDetailsWithAI } from '../services/backendProxy';
+import { fetchSongDetailsWithAI, likeSong, checkLiked } from '../services/backendProxy';
 import { parseLRC, getCurrentLyricIndex, isLRCFormat, convertPlainToLyrics, type LyricLine } from '../utils/lrcParser';
 
 interface LyricsModalProps {
@@ -23,6 +23,11 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const [downloadState, setDownloadState] = useState<'idle' | 'success'>('idle');
   const currentLineRef = useRef<HTMLParagraphElement>(null);
+
+  // Like button state
+  const [isLiked, setIsLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
+  const [isLiking, setIsLiking] = useState(false);
 
   // Parse lyrics into structured format
   const parsedLyrics: LyricLine[] | null = song?.lyrics
@@ -60,6 +65,36 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({
       scrollRef.current.scrollTop = 0;
     }
   }, [isOpen, song?.id]);
+
+  // Check if user has already liked this song and get current like count
+  useEffect(() => {
+    if (isOpen && song) {
+      setLikeCount(song.popularity);
+      checkLiked(song.id).then(liked => {
+        setIsLiked(liked);
+      });
+    }
+  }, [isOpen, song]);
+
+  // Handle like button click
+  const handleLike = async () => {
+    if (!song || isLiking || isLiked) return;
+
+    setIsLiking(true);
+    try {
+      const result = await likeSong(song.id);
+      if (result.liked) {
+        setIsLiked(true);
+        setLikeCount(result.newPopularity);
+      } else if (result.alreadyLiked) {
+        setIsLiked(true);
+      }
+    } catch (error) {
+      console.error('Failed to like song:', error);
+    } finally {
+      setIsLiking(false);
+    }
+  };
 
   if (!isOpen || !song) return null;
 
@@ -111,7 +146,25 @@ export const LyricsModal: React.FC<LyricsModalProps> = ({
       <div className="relative z-10 flex items-center justify-between p-6">
         <div className="flex flex-col">
           <h2 className="text-2xl font-bold text-white tracking-tight">{song.title}</h2>
-          <p className="text-neon-accent/80 font-medium">{song.artist}</p>
+          <div className="flex items-center gap-3">
+            <p className="text-neon-accent/80 font-medium">{song.artist}</p>
+            <span className="text-slate-400 text-sm">•</span>
+            <button
+              onClick={handleLike}
+              disabled={isLiking || isLiked}
+              className={`flex items-center gap-1.5 text-sm transition-all duration-300 group ${isLiked
+                ? 'text-rose-400 cursor-default'
+                : 'text-slate-400 hover:text-rose-400'
+                }`}
+              title={isLiked ? '已喜欢' : '点击喜欢'}
+            >
+              <Heart
+                size={16}
+                className={`transition-all duration-300 ${isLiked ? 'fill-rose-400' : 'group-hover:scale-110'} ${isLiking ? 'animate-pulse' : ''}`}
+              />
+              <span className="font-medium">{likeCount}</span>
+            </button>
+          </div>
         </div>
 
         {/* Action Buttons */}

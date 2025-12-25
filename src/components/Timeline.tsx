@@ -122,11 +122,6 @@ export const Timeline: React.FC<TimelineProps> = ({
     // Track how many songs placed in each month for Y distribution
     const monthCounters = new Map<string, number>();
 
-    // Y-axis distribution: divide viewport into horizontal bands for even spacing
-    const NUM_Y_BANDS = 8;
-    const bandHeight = 80 / NUM_Y_BANDS;
-    const bandCounters = new Array(NUM_Y_BANDS).fill(0);
-
     sortedSongs.forEach((song, songIndex) => {
       const dateParts = song.releaseDate.split('-');
       const year = parseInt(dateParts[0]);
@@ -159,30 +154,23 @@ export const Timeline: React.FC<TimelineProps> = ({
       const MIN_Y_SPACING = 8;
       const MIN_X_SPACING = 20;
 
-      // **Improved Uniform Y Distribution**
-      // Find the least occupied band for better distribution
-      let targetBand = 0;
-      let minCount = bandCounters[0];
-      for (let i = 1; i < NUM_Y_BANDS; i++) {
-        if (bandCounters[i] < minCount) {
-          minCount = bandCounters[i];
-          targetBand = i;
-        }
-      }
+      // **Popularity-based Y positioning**
+      // Higher popularity = higher Y (appears at top since Y is bottom-based %)
+      // Map popularity (0-100) to Y range (15-85)
+      const MIN_Y = 15;
+      const MAX_Y = 85;
+      const Y_RANGE = MAX_Y - MIN_Y;
 
-      // Calculate base Y within the selected band
-      const bandBaseY = 10 + targetBand * bandHeight;
+      // Base Y from popularity (higher popularity = higher Y position)
+      const popularityNormalized = Math.min(100, Math.max(0, song.popularity)) / 100;
+      const baseY = MIN_Y + popularityNormalized * Y_RANGE;
 
-      // Add controlled randomness within band
+      // Add small random jitter to prevent exact overlaps for same popularity
       const randomSeed = (song.title.charCodeAt(0) || 0) + (song.artist.charCodeAt(0) || 0) + songIndex;
       const pseudoRandom = (Math.sin(randomSeed) + 1) / 2;
-      const withinBandOffset = pseudoRandom * bandHeight;
+      const jitter = (pseudoRandom - 0.5) * 8; // ±4% jitter
 
-      // Slight popularity bias for visual interest
-      const popularityBias = (song.popularity / 100) * 5 - 2.5;
-
-      let finalY = bandBaseY + withinBandOffset + popularityBias;
-      bandCounters[targetBand]++;
+      let finalY = baseY + jitter;
 
       // Clamp to valid range (10-90%)
       finalY = Math.max(10, Math.min(90, finalY));

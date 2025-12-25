@@ -317,6 +317,73 @@ async function handleGetStats(env: Env) {
 }
 
 // ============================================================================
+// Song Like Functions
+// ============================================================================
+
+async function handleLikeSong(env: Env, songId: string, ip: string) {
+    try {
+        // Check if this IP has already liked this song
+        const existing = await callSupabase(
+            env,
+            `song_likes?select=id&song_id=eq.${songId}&ip_address=eq.${encodeURIComponent(ip)}`
+        );
+
+        if (existing && existing.length > 0) {
+            // Already liked - get current popularity
+            const song = await callSupabase(env, `songs?select=popularity&id=eq.${songId}`);
+            return {
+                success: true,
+                liked: false, // Already liked before
+                alreadyLiked: true,
+                newPopularity: song?.[0]?.popularity || 0
+            };
+        }
+
+        // Insert like record
+        await callSupabase(env, "song_likes", {
+            method: "POST",
+            body: JSON.stringify({
+                song_id: songId,
+                ip_address: ip
+            })
+        });
+
+        // Increment popularity
+        const song = await callSupabase(env, `songs?select=popularity&id=eq.${songId}`);
+        const currentPopularity = song?.[0]?.popularity || 0;
+        const newPopularity = currentPopularity + 1;
+
+        await callSupabase(env, `songs?id=eq.${songId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ popularity: newPopularity })
+        });
+
+        return {
+            success: true,
+            liked: true,
+            alreadyLiked: false,
+            newPopularity: newPopularity
+        };
+    } catch (error) {
+        console.error('Error liking song:', error);
+        throw error;
+    }
+}
+
+async function handleCheckLiked(env: Env, songId: string, ip: string) {
+    try {
+        const existing = await callSupabase(
+            env,
+            `song_likes?select=id&song_id=eq.${songId}&ip_address=eq.${encodeURIComponent(ip)}`
+        );
+        return { liked: existing && existing.length > 0 };
+    } catch (error) {
+        console.error('Error checking like status:', error);
+        return { liked: false };
+    }
+}
+
+// ============================================================================
 // CTFile Functions
 // ============================================================================
 
@@ -438,6 +505,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
             case "getStats":
                 result = await handleGetStats(env);
                 break;
+
+            // Song Like Operations
+            case "likeSong": {
+                const likeIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+                result = await handleLikeSong(env, data.songId, likeIp);
+                break;
+            }
+
+            case "checkLiked": {
+                const checkIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
+                result = await handleCheckLiked(env, data.songId, checkIp);
+                break;
+            }
 
             default:
                 return new Response(

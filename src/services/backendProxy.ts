@@ -268,3 +268,31 @@ export async function getVisitorStats(): Promise<{ totalVisits: number; activeUs
         return { totalVisits: 0, activeUsers: 0 };
     }
 }
+
+// ============================================================================
+// Song Like Exports
+// ============================================================================
+
+export async function likeSong(songId: string): Promise<{ liked: boolean; alreadyLiked: boolean; newPopularity: number }> {
+    try {
+        const result = await callWorkerAPI("likeSong", { songId });
+        return {
+            liked: result.liked ?? false,
+            alreadyLiked: result.alreadyLiked ?? false,
+            newPopularity: result.newPopularity ?? 0
+        };
+    } catch (error) {
+        console.error("Failed to like song:", error);
+        return { liked: false, alreadyLiked: false, newPopularity: 0 };
+    }
+}
+
+export async function checkLiked(songId: string): Promise<boolean> {
+    try {
+        const result = await callWorkerAPI("checkLiked", { songId });
+        return result.liked ?? false;
+    } catch (error) {
+        console.error("Failed to check like status:", error);
+        return false;
+    }
+}
