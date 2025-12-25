@@ -269,12 +269,13 @@ export const Timeline: React.FC<TimelineProps> = ({
   }, [searchedSongId, layout, yAxisScale]); // Re-run if ID changes, Layout changes, or Y scale changes
 
   // ---------------------------------------------------------------------------
-  // Initial Scroll to Year 2000 (Only Once - Persists Across Re-renders)
+  // Initial Scroll to Year 2000 (Only Once - After Songs are Loaded)
   // ---------------------------------------------------------------------------
   const hasInitialScrolledRef = useRef(false);
 
   useEffect(() => {
-    if (!hasInitialScrolledRef.current && containerRef.current) {
+    // Only scroll once songs are loaded and we haven't scrolled yet
+    if (!hasInitialScrolledRef.current && containerRef.current && songs.length > 0) {
       const container = containerRef.current;
 
       // Try to find year 2000 position from density data
@@ -294,35 +295,33 @@ export const Timeline: React.FC<TimelineProps> = ({
           });
           hasInitialScrolledRef.current = true;
           console.log(`Initial scroll to year ${targetYear} at x=${offset.start}`);
-        }, 100);
+        }, 200); // Slightly longer delay to ensure layout is ready
       } else if (YEARS.length > 0) {
-        // If no 2000, but we have other years, find the closest year
+        // If no 2000, but we have other years, find the closest year or scroll to middle
         const startYear = YEARS[0].year;
-        const estimatedX = TIMELINE_PADDING + (targetYear - startYear) * PIXELS_PER_YEAR;
+        const endYear = YEARS[YEARS.length - 1].year;
+
+        // Scroll to the middle of the timeline if 2000 is not in range
+        const middleYear = Math.floor((startYear + endYear) / 2);
+        const middleMonthKey = `${middleYear}-01`;
+        const middleOffset = monthDensityData.xOffsets.get(middleMonthKey);
+
+        const targetX = middleOffset
+          ? middleOffset.start - window.innerWidth / 3
+          : TIMELINE_PADDING + ((middleYear - startYear) * pixelsPerYear) - window.innerWidth / 3;
 
         setTimeout(() => {
           container.scrollTo({
-            left: Math.max(0, estimatedX - window.innerWidth / 3),
+            left: Math.max(0, targetX),
             top: 0,
             behavior: 'smooth'
           });
           hasInitialScrolledRef.current = true;
-          console.log(`Initial scroll to estimated year ${targetYear} position`);
-        }, 100);
-      } else {
-        // No songs at all - just scroll a bit to the right to show the timeline
-        setTimeout(() => {
-          container.scrollTo({
-            left: PIXELS_PER_YEAR * 2, // Scroll ~2 years in
-            top: 0,
-            behavior: 'smooth'
-          });
-          hasInitialScrolledRef.current = true;
-          console.log('Initial scroll to beginning (no songs)');
-        }, 100);
+          console.log(`Initial scroll to middle year ${middleYear}`);
+        }, 200);
       }
     }
-  }, [monthDensityData, YEARS]); // Ref doesn't need to be in deps
+  }, [monthDensityData, YEARS, songs.length, pixelsPerYear]); // Added songs.length as dependency
 
   // ---------------------------------------------------------------------------
   // Zoom Logic: Ctrl/Cmd+Scroll for Y-axis zoom, Regular scroll for page scroll

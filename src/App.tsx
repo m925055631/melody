@@ -417,8 +417,6 @@ const App: React.FC = () => {
           // This song needs update - log it for debugging
           songsNeedingUpdate++;
           const needsRepair = song.audioUrl && !song.fileId;
-          const isExpired = song.audioUrl && song.fileId && isAudioUrlExpired(song);
-          const hasNoAudio = !song.audioUrl;
 
           if (needsRepair) {
             console.log(`[Sync Debug] Song needs fileId repair: "${song.title}" - "${song.artist}"`);

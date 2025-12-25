@@ -232,7 +232,7 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
         </div>
 
         {/* Progress Bar Section */}
-        {duration > 0 && (
+        {duration > 0 ? (
           <div
             className="px-4 pb-3 pt-1"
             onClick={(e) => e.stopPropagation()}
@@ -275,6 +275,14 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
               <span className="text-xs text-slate-400 font-mono w-10">
                 {formatTime(duration)}
               </span>
+            </div>
+          </div>
+        ) : (
+          /* Loading State - Show when audio is still loading */
+          <div className="px-4 pb-3 pt-1">
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 size={14} className="animate-spin text-neon-accent" />
+              <span className="text-xs text-slate-400">请求播放中，请稍后...</span>
             </div>
           </div>
         )}
