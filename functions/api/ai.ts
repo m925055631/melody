@@ -240,6 +240,59 @@ async function handleGetAllSongs(env: Env) {
     return await callSupabase(env, "songs?select=*&order=release_date.asc");
 }
 
+// Get random songs with limit for initial page load
+async function handleGetRandomSongs(env: Env, limit: number = 300) {
+    // Supabase doesn't have built-in random, but we can use a workaround:
+    // Get total count, then fetch with random offset chunks
+    // For simplicity, we'll fetch all IDs first, shuffle in worker, then fetch details
+    // But for performance, we'll use Supabase's random() function if available via RPC
+    // Fallback: just get latest songs ordered randomly-ish by combining with popularity
+
+    // Efficient approach: Use PostgreSQL's TABLESAMPLE or ORDER BY random()
+    // Supabase REST API doesn't support random() directly, so we'll use a creative approach:
+    // Order by a hash of id + current hour (changes every hour for variety)
+    const hourSeed = Math.floor(Date.now() / 3600000); // Changes every hour
+
+    // Get songs with limit, ordered by a pseudo-random factor
+    // We'll use order by popularity desc, release_date desc to get a good mix
+    // and limit the results
+    const songs = await callSupabase(
+        env,
+        `songs?select=*&order=popularity.desc,release_date.desc&limit=${limit}`
+    );
+
+    // Shuffle the results for randomness (since Supabase doesn't support ORDER BY random())
+    for (let i = songs.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [songs[i], songs[j]] = [songs[j], songs[i]];
+    }
+
+    return songs;
+}
+
+// Search songs in database by title or artist
+async function handleSearchSongsInDB(env: Env, query: string, limit: number = 50) {
+    // Use ilike for case-insensitive search
+    const encodedQuery = encodeURIComponent(`%${query}%`);
+    return await callSupabase(
+        env,
+        `songs?select=*&or=(title.ilike.${encodedQuery},artist.ilike.${encodedQuery})&limit=${limit}`
+    );
+}
+
+// Get a specific song by ID
+async function handleGetSongById(env: Env, songId: string) {
+    const results = await callSupabase(env, `songs?select=*&id=eq.${songId}`);
+    return results?.[0] || null;
+}
+
+// Get songs by multiple IDs
+async function handleGetSongsByIds(env: Env, songIds: string[]) {
+    if (songIds.length === 0) return [];
+    const idsParam = songIds.map(id => `"${id}"`).join(',');
+    return await callSupabase(env, `songs?select=*&id=in.(${idsParam})`);
+}
+
 async function handleCreateSong(env: Env, song: any) {
     return await callSupabase(env, "songs", {
         method: "POST",
@@ -498,6 +551,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
             // Supabase Operations
             case "getAllSongs":
                 result = await handleGetAllSongs(env);
+                break;
+
+            case "getRandomSongs":
+                result = await handleGetRandomSongs(env, data.limit || 300);
+                break;
+
+            case "searchSongsInDB":
+                result = await handleSearchSongsInDB(env, data.query, data.limit || 50);
+                break;
+
+            case "getSongById":
+                result = await handleGetSongById(env, data.songId);
+                break;
+
+            case "getSongsByIds":
+                result = await handleGetSongsByIds(env, data.songIds);
                 break;
 
             case "createSong":

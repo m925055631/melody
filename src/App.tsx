@@ -12,6 +12,8 @@ import type { Song } from './types';
 // All backend operations go through secure Worker proxy (no secrets exposed in browser)
 import {
   getAllSongs,
+  getRandomSongs,
+  searchSongsInDB,
   createSong,
   updateSong as updateSongInDB,
   fetchSongDetailsWithAI,
@@ -199,29 +201,73 @@ const App: React.FC = () => {
     );
   }, []);
 
-  // Load data from Supabase on mount
+  // Load data from cache first, then sync with Supabase
   useEffect(() => {
+    const CACHE_KEY = 'melody_songs_cache';
+    const CACHE_TIMESTAMP_KEY = 'melody_songs_cache_timestamp';
+    const CACHE_MAX_AGE = 30 * 60 * 1000; // 30 minutes cache validity
+
     const initData = async () => {
       try {
-        // Fetch songs from Supabase
-        const supabaseSongs = await getAllSongs();
+        // Step 1: Try to load from cache immediately for instant display
+        const cachedData = localStorage.getItem(CACHE_KEY);
+        const cacheTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
 
-        if (supabaseSongs.length > 0) {
-          // Data exists in Supabase - deduplicate before setting
-          const uniqueSongs = deduplicateSongs(supabaseSongs);
-          if (uniqueSongs.length < supabaseSongs.length) {
-            console.log(`Removed ${supabaseSongs.length - uniqueSongs.length} duplicate songs`);
+        if (cachedData) {
+          try {
+            const cachedSongs = JSON.parse(cachedData);
+            if (cachedSongs.length > 0) {
+              console.log(`[Cache] Loaded ${cachedSongs.length} songs from cache instantly`);
+              setSongs(cachedSongs);
+              setIsDataLoaded(true); // Show UI immediately with cached data
+            }
+          } catch (e) {
+            console.warn('[Cache] Failed to parse cached data');
           }
+        }
+
+        // Step 2: Check if cache is still fresh
+        const isCacheFresh = cacheTimestamp &&
+          (Date.now() - parseInt(cacheTimestamp, 10)) < CACHE_MAX_AGE;
+
+        if (isCacheFresh && cachedData) {
+          console.log('[Cache] Cache is fresh, skipping database fetch');
+          return;
+        }
+
+        // Step 3: Fetch only 300 random songs from database (lazy loading)
+        console.log('[Sync] Fetching 300 random songs from database (lazy loading)...');
+        const randomSongs = await getRandomSongs(300);
+
+        if (randomSongs.length > 0) {
+          // Deduplicate before setting
+          const uniqueSongs = deduplicateSongs(randomSongs);
+          if (uniqueSongs.length < randomSongs.length) {
+            console.log(`Removed ${randomSongs.length - uniqueSongs.length} duplicate songs`);
+          }
+
           setSongs(uniqueSongs);
-        } else {
-          // No songs in database - start with empty state
+
+          // Update cache
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(uniqueSongs));
+            localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+            console.log(`[Cache] Updated cache with ${uniqueSongs.length} songs`);
+          } catch (e) {
+            console.warn('[Cache] Failed to save to cache (storage full?)');
+          }
+        } else if (!cachedData) {
+          // No songs in database and no cache
           console.log('No songs in database. Starting with empty library.');
           setSongs([]);
         }
       } catch (error) {
         console.error('Error loading songs from Supabase:', error);
-        // Start with empty array on error - user can add songs manually
-        setSongs([]);
+        // If we already loaded from cache, keep that data
+        // Otherwise start with empty array
+        if (!songs.length) {
+          setSongs([]);
+        }
       } finally {
         setIsDataLoaded(true);
       }
@@ -562,6 +608,14 @@ const App: React.FC = () => {
         const uniqueSongs = deduplicateSongs(currentSongs);
         setSongs(uniqueSongs);
 
+        // Update cache after sync
+        try {
+          localStorage.setItem('melody_songs_cache', JSON.stringify(uniqueSongs));
+          localStorage.setItem('melody_songs_cache_timestamp', Date.now().toString());
+        } catch (e) {
+          console.warn('[Cache] Failed to update cache after sync');
+        }
+
         const now = new Date();
         localStorage.setItem(LAST_SYNC_KEY, now.toISOString());
 
@@ -728,7 +782,7 @@ const App: React.FC = () => {
     fetchMissingDetails();
   }, [currentSong]);
 
-  const handleSearch = useCallback((query: string) => {
+  const handleSearch = useCallback(async (query: string) => {
     setIsSearching(true);
     setSearchedSongId(null);
     setSearchResults([]);
@@ -737,7 +791,7 @@ const App: React.FC = () => {
     const normalizedQuery = query.toLowerCase().trim();
     const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
 
-    // Collect all matching songs
+    // Collect all matching songs from loaded songs
     let matches: Song[] = [];
 
     // 1. Check if query exactly matches an artist name - return all songs by that artist
@@ -802,6 +856,32 @@ const App: React.FC = () => {
 
           return 0;
         });
+      }
+    }
+
+    // 4. If no local matches found, search in database (lazy loading)
+    if (matches.length === 0) {
+      console.log('[Search] No local matches, searching database...');
+      try {
+        const dbMatches = await searchSongsInDB(query, 50);
+        if (dbMatches.length > 0) {
+          console.log(`[Search] Found ${dbMatches.length} songs in database`);
+          matches = dbMatches;
+
+          // Add these songs to our local state so they're available for playback
+          setSongs(prev => {
+            const newSongs = dbMatches.filter(dbSong =>
+              !prev.some(s => s.id === dbSong.id)
+            );
+            if (newSongs.length > 0) {
+              console.log(`[Search] Adding ${newSongs.length} new songs to local state`);
+              return [...prev, ...newSongs];
+            }
+            return prev;
+          });
+        }
+      } catch (error) {
+        console.error('[Search] Database search failed:', error);
       }
     }
 

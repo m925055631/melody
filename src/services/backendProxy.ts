@@ -220,6 +220,52 @@ export async function getAllSongs(): Promise<Song[]> {
     }
 }
 
+// Get random songs with limit for initial page load (lazy loading)
+export async function getRandomSongs(limit: number = 300): Promise<Song[]> {
+    try {
+        const records = await callWorkerAPI("getRandomSongs", { limit });
+        return records.map(recordToSong);
+    } catch (error) {
+        console.error("Failed to get random songs:", error);
+        return [];
+    }
+}
+
+// Search songs in database by title or artist
+export async function searchSongsInDB(query: string, limit: number = 50): Promise<Song[]> {
+    try {
+        const records = await callWorkerAPI("searchSongsInDB", { query, limit });
+        return records.map(recordToSong);
+    } catch (error) {
+        console.error("Failed to search songs:", error);
+        return [];
+    }
+}
+
+// Get a specific song by ID
+export async function getSongById(songId: string): Promise<Song | null> {
+    try {
+        const record = await callWorkerAPI("getSongById", { songId });
+        return record ? recordToSong(record) : null;
+    } catch (error) {
+        console.error("Failed to get song by ID:", error);
+        return null;
+    }
+}
+
+// Get songs by multiple IDs
+export async function getSongsByIds(songIds: string[]): Promise<Song[]> {
+    try {
+        if (songIds.length === 0) return [];
+        const records = await callWorkerAPI("getSongsByIds", { songIds });
+        return records.map(recordToSong);
+    } catch (error) {
+        console.error("Failed to get songs by IDs:", error);
+        return [];
+    }
+}
+
+
 export async function createSong(song: Song): Promise<Song> {
     const record = songToRecord(song);
     const result = await callWorkerAPI("createSong", { song: record });
