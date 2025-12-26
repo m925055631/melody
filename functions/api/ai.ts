@@ -10,7 +10,7 @@ interface Env {
 }
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_MODEL = "google/gemini-2.5-flash";
+const OPENROUTER_MODEL = "google/gemini-3-flash-preview";
 
 // CORS headers for frontend access
 const corsHeaders = {
