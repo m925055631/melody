@@ -80,23 +80,53 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
 
     let audioUrl = currentSong.audioUrl;
 
-    try {
-      // Check if URL might be expired (CTFile URLs expire after 24 hours)
-      if (onRefreshUrl && currentSong.audioUrlUpdatedAt) {
+    // 30-second timeout for entire operation
+    const TIMEOUT_MS = 30000;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('TIMEOUT')), TIMEOUT_MS);
+    });
+
+    const downloadOperation = async () => {
+      // Always test URL validity first before downloading
+      console.log('[Download] Testing URL validity...');
+      const testController = new AbortController();
+      const testTimeoutId = setTimeout(() => testController.abort(), 5000);
+
+      let needsRefresh = false;
+      try {
+        const testResponse = await fetch(audioUrl, { method: 'HEAD', signal: testController.signal });
+        clearTimeout(testTimeoutId);
+        if (!testResponse.ok) {
+          console.log('[Download] URL test failed with status:', testResponse.status);
+          needsRefresh = true;
+        }
+      } catch (testError) {
+        clearTimeout(testTimeoutId);
+        console.log('[Download] URL test failed:', testError);
+        needsRefresh = true;
+      }
+
+      // Also check if expired by time
+      if (!needsRefresh && onRefreshUrl && currentSong.audioUrlUpdatedAt) {
         const updatedAt = new Date(currentSong.audioUrlUpdatedAt).getTime();
         const now = Date.now();
-        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+        const SIX_HOURS = 6 * 60 * 60 * 1000;
+        if (now - updatedAt >= SIX_HOURS) {
+          console.log('[Download] URL expired by time, needs refresh');
+          needsRefresh = true;
+        }
+      }
 
-        if (now - updatedAt >= TWENTY_FOUR_HOURS) {
-          setDownloadState('refreshing');
-          console.log('[Download] URL expired, refreshing...');
-          const newUrl = await onRefreshUrl();
-          if (newUrl) {
-            audioUrl = newUrl;
-            console.log('[Download] URL refreshed successfully');
-          } else {
-            throw new Error('无法刷新下载链接');
-          }
+      // Refresh URL if needed
+      if (needsRefresh && onRefreshUrl) {
+        setDownloadState('refreshing');
+        console.log('[Download] Refreshing URL...');
+        const newUrl = await onRefreshUrl();
+        if (newUrl) {
+          audioUrl = newUrl;
+          console.log('[Download] URL refreshed successfully');
+        } else {
+          throw new Error('无法刷新下载链接');
         }
       }
 
@@ -116,9 +146,20 @@ export const BottomPlayerBar: React.FC<BottomPlayerBarProps> = ({
 
       setDownloadState('success');
       setTimeout(() => setDownloadState('idle'), 2000);
+    };
+
+    try {
+      await Promise.race([downloadOperation(), timeoutPromise]);
     } catch (error) {
       console.error('Download failed:', error);
       setDownloadState('idle');
+
+      if (error instanceof Error && error.message === 'TIMEOUT') {
+        alert(`下载超时 ⏱️\n\n歌曲 "${currentSong.title}" 下载时间超过30秒。\n\n可能的原因：\n• 网络连接较慢\n• 服务器响应延迟\n• 文件较大\n\n请稍后重试，或检查网络连接。`);
+      } else {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        alert(`下载失败 ❌\n\n${errorMessage}\n\n请检查网络连接或稍后重试。`);
+      }
     }
   };
 

@@ -150,9 +150,30 @@ export function isAudioUrlExpired(song: Song): boolean {
 
     const updatedAt = new Date(song.audioUrlUpdatedAt).getTime();
     const now = new Date().getTime();
-    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+    const SIX_HOURS = 6 * 60 * 60 * 1000;
 
-    return (now - updatedAt) >= TWENTY_FOUR_HOURS;
+    return (now - updatedAt) >= SIX_HOURS;
+}
+
+// Test if audio URL is valid by sending a HEAD request
+export async function testAudioUrl(url: string): Promise<boolean> {
+    if (!url) return false;
+
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+        const response = await fetch(url, {
+            method: 'HEAD',
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+        return response.ok; // 2xx status codes
+    } catch (error) {
+        console.warn('[testAudioUrl] URL test failed:', error);
+        return false;
+    }
 }
 
 function recordToSong(record: SongRecord): Song {

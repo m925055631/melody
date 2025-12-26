@@ -20,7 +20,8 @@ import {
   getVisitorStats,
   listMusicFiles,
   getPlayableUrl,
-  isAudioUrlExpired
+  isAudioUrlExpired,
+  testAudioUrl
 } from './services/backendProxy';
 import { ctfileRateLimiter } from './utils/rateLimiter';
 import { Volume2, VolumeX, Shuffle, Repeat, Repeat1, Loader2 } from 'lucide-react';
@@ -589,8 +590,8 @@ const App: React.FC = () => {
     [songs, currentlyPlayingId]
   );
 
-  // Helper to refresh a single song's audio URL if expired
-  const refreshSongUrl = useCallback(async (songId: string): Promise<string | null> => {
+  // Helper to refresh a single song's audio URL if expired or invalid
+  const refreshSongUrl = useCallback(async (songId: string, forceRefresh: boolean = false): Promise<string | null> => {
     const song = songs.find(s => s.id === songId);
     if (!song) return null;
 
@@ -601,11 +602,21 @@ const App: React.FC = () => {
       return song.audioUrl || null;
     }
 
-    if (!isAudioUrlExpired(song)) {
-      return song.audioUrl || null;
+    // Check if URL is expired by time
+    const isExpired = isAudioUrlExpired(song);
+
+    // If not expired and not forcing refresh, test if URL is still valid
+    if (!isExpired && !forceRefresh && song.audioUrl) {
+      console.log(`[Refresh] Testing URL validity for: ${song.title}`);
+      const isValid = await testAudioUrl(song.audioUrl);
+      if (isValid) {
+        console.log(`[Refresh] URL is valid for: ${song.title}`);
+        return song.audioUrl;
+      }
+      console.log(`[Refresh] URL test failed for: ${song.title}, forcing refresh`);
     }
 
-    console.log(`Refreshing expired audio URL for: ${song.title}`);
+    console.log(`Refreshing audio URL for: ${song.title} (expired: ${isExpired}, forceRefresh: ${forceRefresh})`);
     try {
       const newUrl = await getPlayableUrl(song.fileId);
       if (newUrl) {
@@ -630,17 +641,41 @@ const App: React.FC = () => {
     return song.audioUrl || null;
   }, [songs]);
 
-  // Centralized play handler that checks for expiration
+  // Centralized play handler that checks for expiration with 30-second timeout
   const playSongWithRefresh = useCallback(async (id: string | null) => {
     if (!id) {
       setCurrentlyPlayingId(null);
       return;
     }
 
-    // Attempt to refresh if needed before playing
-    await refreshSongUrl(id);
-    setCurrentlyPlayingId(id);
-  }, [refreshSongUrl]);
+    const song = songs.find(s => s.id === id);
+    const songTitle = song?.title || '歌曲';
+
+    // 30-second timeout for entire operation
+    const TIMEOUT_MS = 30000;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('TIMEOUT')), TIMEOUT_MS);
+    });
+
+    const playOperation = async () => {
+      // Attempt to refresh if needed before playing
+      await refreshSongUrl(id);
+      setCurrentlyPlayingId(id);
+    };
+
+    try {
+      await Promise.race([playOperation(), timeoutPromise]);
+    } catch (error) {
+      console.error('Play operation failed:', error);
+
+      if (error instanceof Error && error.message === 'TIMEOUT') {
+        alert(`播放超时 ⏱️\n\n歌曲 "${songTitle}" 准备播放时间超过30秒。\n\n可能的原因：\n• 网络连接较慢\n• 音频链接刷新延迟\n• 服务器响应缓慢\n\n请稍后重试，或检查网络连接。`);
+      } else {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        alert(`播放失败 ❌\n\n${errorMessage}\n\n请检查网络连接或稍后重试。`);
+      }
+    }
+  }, [refreshSongUrl, songs]);
 
   // Helper to add song to visible list if not already there
   const addToVisibleSongs = useCallback((song: Song) => {
