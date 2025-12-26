@@ -363,3 +363,69 @@ export async function checkLiked(songId: string): Promise<boolean> {
         return false;
     }
 }
+
+// ============================================================================
+// Release Date Update Exports
+// ============================================================================
+
+interface ReleaseDateSearchResult {
+    found: boolean;
+    releaseDate?: string;
+    source?: string;
+}
+
+interface UpdateReleaseDatesResult {
+    processed: number;
+    updated: number;
+    unchanged: number;
+    notFound: number;
+    results: Array<{
+        id: string;
+        title: string;
+        artist: string;
+        oldDate: string;
+        newDate?: string;
+        status: string;
+    }>;
+}
+
+interface UpdateSingleReleaseDateResult {
+    success: boolean;
+    updated?: boolean;
+    oldDate?: string;
+    newDate?: string;
+    source?: string;
+    message?: string;
+    currentDate?: string;
+    error?: string;
+}
+
+// Search for release date using AI
+export async function searchReleaseDate(title: string, artist: string): Promise<ReleaseDateSearchResult> {
+    try {
+        return await callWorkerAPI("searchReleaseDate", { title, artist });
+    } catch (error) {
+        console.error("Failed to search release date:", error);
+        return { found: false };
+    }
+}
+
+// Update release dates for multiple songs
+export async function updateReleaseDates(options: { limit?: number; onlyMissing?: boolean } = {}): Promise<UpdateReleaseDatesResult> {
+    try {
+        return await callWorkerAPI("updateReleaseDates", options);
+    } catch (error) {
+        console.error("Failed to update release dates:", error);
+        return { processed: 0, updated: 0, unchanged: 0, notFound: 0, results: [] };
+    }
+}
+
+// Update release date for a single song
+export async function updateSingleReleaseDate(songId: string): Promise<UpdateSingleReleaseDateResult> {
+    try {
+        return await callWorkerAPI("updateSingleReleaseDate", { songId });
+    } catch (error) {
+        console.error("Failed to update single release date:", error);
+        return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    }
+}

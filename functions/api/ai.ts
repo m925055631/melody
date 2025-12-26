@@ -2,15 +2,17 @@
 // This runs on the edge and keeps ALL API keys secure
 
 interface Env {
-    OPENROUTER_API_KEY: string;
+    GEMINI_API_KEY: string;  // Gemini API Key
+    OPENROUTER_API_KEY?: string;  // Deprecated: use GEMINI_API_KEY
     SUPABASE_URL: string;
     SUPABASE_ANON_KEY: string;
     CTFILE_FOLDER_ID: string;
     CTFILE_TOKEN: string;
 }
 
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_MODEL = "google/gemini-3-flash-preview";
+// Gemini API Configuration
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 // CORS headers for frontend access
 const corsHeaders = {
@@ -19,48 +21,132 @@ const corsHeaders = {
     "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// Helper to get API key (supports both new and old env var names)
+function getGeminiApiKey(env: Env): string {
+    return env.GEMINI_API_KEY || env.OPENROUTER_API_KEY || "";
+}
+
 // ============================================================================
-// OpenRouter AI Functions
+// Gemini AI Functions
 // ============================================================================
 
-async function callOpenRouter(
+interface GeminiContent {
+    role: string;
+    parts: Array<{ text: string }>;
+}
+
+interface GeminiRequest {
+    contents: GeminiContent[];
+    systemInstruction?: { parts: Array<{ text: string }> };
+    tools?: Array<{ google_search: Record<string, never> }>;
+    generationConfig?: {
+        responseMimeType?: string;
+        temperature?: number;
+    };
+}
+
+async function callGeminiAI(
     apiKey: string,
     prompt: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    useGoogleSearch: boolean = false
 ): Promise<any> {
     try {
-        const response = await fetch(OPENROUTER_API_URL, {
+        const url = `${GEMINI_API_BASE}/models/${GEMINI_MODEL}:generateContent`;
+
+        const requestBody: GeminiRequest = {
+            contents: [
+                {
+                    role: "user",
+                    parts: [{ text: prompt }]
+                }
+            ],
+            generationConfig: {
+                temperature: 0.7
+            }
+        };
+
+        // Note: responseMimeType: "application/json" is incompatible with Google Search tools
+        // Only set it when NOT using Google Search
+        if (!useGoogleSearch) {
+            requestBody.generationConfig!.responseMimeType = "application/json";
+        }
+
+        // Add system instruction if provided
+        if (systemPrompt) {
+            requestBody.systemInstruction = {
+                parts: [{ text: systemPrompt }]
+            };
+        }
+
+        // Add Google Search tool for grounding if needed
+        if (useGoogleSearch) {
+            requestBody.tools = [{ google_search: {} }];
+        }
+
+        console.log(`[Gemini API] Calling ${GEMINI_MODEL} with Google Search: ${useGoogleSearch}`);
+
+        const response = await fetch(url, {
             method: "POST",
             headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`,
-                "HTTP-Referer": "https://melody-timeline.pages.dev",
-                "X-Title": "Melody Timeline"
+                "x-goog-api-key": apiKey,
+                "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                model: OPENROUTER_MODEL,
-                messages: [
-                    ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
-                    { role: "user", content: prompt }
-                ],
-                response_format: { type: "json_object" }
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
-            throw new Error(`OpenRouter API error: ${response.status}`);
+            const errorText = await response.text();
+            console.error(`Gemini API error response: ${errorText}`);
+            throw new Error(`Gemini API error: ${response.status}`);
         }
 
         const data = await response.json();
-        const content = data.choices?.[0]?.message?.content;
+
+        // Extract text content from Gemini response format
+        const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        // Log grounding metadata if available (for debugging)
+        const groundingMetadata = data.candidates?.[0]?.groundingMetadata;
+        if (groundingMetadata) {
+            console.log(`[Gemini API] Grounding used ${groundingMetadata.webSearchQueries?.length || 0} search queries`);
+        }
 
         if (!content) {
+            console.warn("[Gemini API] No content in response");
             return null;
         }
 
-        return JSON.parse(content);
+        // Try to parse as JSON, handling potential markdown code blocks
+        let jsonContent = content.trim();
+        if (jsonContent.startsWith("```json")) {
+            jsonContent = jsonContent.slice(7);
+        }
+        if (jsonContent.startsWith("```")) {
+            jsonContent = jsonContent.slice(3);
+        }
+        if (jsonContent.endsWith("```")) {
+            jsonContent = jsonContent.slice(0, -3);
+        }
+
+        try {
+            return JSON.parse(jsonContent.trim());
+        } catch (parseError) {
+            // If JSON parsing fails, try to extract JSON from the text
+            console.warn("[Gemini API] Failed to parse response as JSON, attempting extraction...");
+            const jsonMatch = jsonContent.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    return JSON.parse(jsonMatch[0]);
+                } catch {
+                    console.error("[Gemini API] Could not extract valid JSON from response");
+                }
+            }
+            // Return a default "not found" response for search operations
+            return { found: false, error: "Failed to parse AI response" };
+        }
     } catch (error) {
-        console.error("OpenRouter API call failed:", error);
+        console.error("Gemini API call failed:", error);
         throw error;
     }
 }
@@ -79,7 +165,7 @@ async function handleSearchSong(apiKey: string, query: string) {
 }
 If not found or outside the year range, set found to false and song to null.`;
 
-    return await callOpenRouter(
+    return await callGeminiAI(
         apiKey,
         prompt,
         "You are a music information expert specializing in popular music."
@@ -114,7 +200,7 @@ async function handleFetchLyrics(apiKey: string, title: string, artist: string) 
                         // Generate visual prompt with AI since we got lyrics from LrcLib
                         let visualPrompt = `${title}_${artist}`.replace(/\s+/g, '_');
                         try {
-                            const aiResult = await callOpenRouter(
+                            const aiResult = await callGeminiAI(
                                 apiKey,
                                 `For the song "${title}" by "${artist}", provide a short, vivid English visual description (under 5 words) of the song's mood/vibe for an image generator. Return JSON: {"visualPrompt": "keywords"}`,
                                 "You are a music visualization expert."
@@ -150,7 +236,7 @@ Return JSON in this format:
   "visualPrompt": "short_visual_keywords"
 }`;
 
-    const result = await callOpenRouter(
+    const result = await callGeminiAI(
         apiKey,
         prompt,
         "You are a music lyrics expert."
@@ -176,11 +262,240 @@ async function handleEnrichMetadata(apiKey: string, title: string, artist: strin
 }
 If song not found or outside 1950-2026 range, set found to false.`;
 
-    return await callOpenRouter(
+    return await callGeminiAI(
         apiKey,
         prompt,
         "You are a music information expert specializing in popular music."
     );
+}
+
+// Helper function to validate and normalize date format to YYYY-MM-DD
+function normalizeDate(dateStr: string): string | null {
+    if (!dateStr) return null;
+
+    // Already in YYYY-MM-DD format
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return dateStr;
+    }
+
+    // YYYY-MM format - add day 01
+    if (/^\d{4}-\d{2}$/.test(dateStr)) {
+        return `${dateStr}-01`;
+    }
+
+    // YYYY format - add month and day
+    if (/^\d{4}$/.test(dateStr)) {
+        return `${dateStr}-01-01`;
+    }
+
+    // Try to parse other formats
+    try {
+        const date = new Date(dateStr);
+        if (!isNaN(date.getTime())) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+    } catch {
+        // Fall through to return null
+    }
+
+    return null;
+}
+
+// Search for correct release date using AI
+async function handleSearchReleaseDate(apiKey: string, title: string, artist: string): Promise<{ found: boolean; releaseDate?: string; source?: string }> {
+    const prompt = `Search for the exact release date of the song "${title}" by "${artist}".
+
+Please search carefully and provide the most accurate release date you can find. Consider:
+1. The original release date (not re-releases or remasters)
+2. Single release date if it was released as a single first
+3. Album release date if it was only released on an album
+
+IMPORTANT: The releaseDate MUST be in YYYY-MM-DD format (e.g., "1967-03-12"). 
+If you only know the month, use the 1st of that month (e.g., "1967-03-01").
+If you only know the year, use January 1st (e.g., "1967-01-01").
+
+You MUST return ONLY a valid JSON object in this exact format, no other text:
+{
+  "found": true,
+  "releaseDate": "YYYY-MM-DD",
+  "source": "Brief description"
+}
+
+Or if not found:
+{
+  "found": false
+}`;
+
+    try {
+        const result = await callGeminiAI(
+            apiKey,
+            prompt,
+            "You are a music information expert. You MUST respond with ONLY a valid JSON object, no other text or explanation.",
+            true  // Enable Google Search for better results
+        );
+
+        if (result && result.found && result.releaseDate) {
+            // Normalize the date format
+            const normalizedDate = normalizeDate(result.releaseDate);
+            if (normalizedDate) {
+                return {
+                    found: true,
+                    releaseDate: normalizedDate,
+                    source: result.source
+                };
+            } else {
+                console.warn(`[SearchReleaseDate] Invalid date format: ${result.releaseDate}`);
+                return { found: false };
+            }
+        }
+
+        return result || { found: false };
+    } catch (error) {
+        console.error('Error searching release date:', error);
+        return { found: false };
+    }
+}
+
+// Update release dates for songs in the database
+async function handleUpdateReleaseDates(env: Env, options: { limit?: number; onlyMissing?: boolean } = {}) {
+    const { limit = 10, onlyMissing = false } = options;
+    const results: Array<{ id: string; title: string; artist: string; oldDate: string; newDate?: string; status: string }> = [];
+
+    try {
+        // Get songs from database
+        // If onlyMissing is true, we could filter by null release dates
+        // But since release_date is NOT NULL in schema, we'll just get songs to verify/update
+        let endpoint = `songs?select=id,title,artist,release_date&limit=${limit}`;
+
+        // Order by oldest first (might have less accurate dates)
+        endpoint += "&order=release_date.asc";
+
+        const songs = await callSupabase(env, endpoint);
+
+        console.log(`[UpdateReleaseDates] Processing ${songs.length} songs...`);
+
+        for (const song of songs) {
+            const { id, title, artist, release_date } = song;
+
+            console.log(`[UpdateReleaseDates] Searching for: "${title}" by "${artist}"`);
+
+            // Search for correct release date using AI
+            const searchResult = await handleSearchReleaseDate(getGeminiApiKey(env), title, artist);
+
+            if (searchResult.found && searchResult.releaseDate) {
+                const newDate = searchResult.releaseDate;
+
+                // Only update if the date is different
+                if (newDate !== release_date) {
+                    console.log(`[UpdateReleaseDates] Updating ${title}: ${release_date} -> ${newDate}`);
+
+                    await callSupabase(env, `songs?id=eq.${id}`, {
+                        method: "PATCH",
+                        body: JSON.stringify({ release_date: newDate })
+                    });
+
+                    results.push({
+                        id,
+                        title,
+                        artist,
+                        oldDate: release_date,
+                        newDate,
+                        status: 'updated'
+                    });
+                } else {
+                    results.push({
+                        id,
+                        title,
+                        artist,
+                        oldDate: release_date,
+                        status: 'unchanged'
+                    });
+                }
+            } else {
+                results.push({
+                    id,
+                    title,
+                    artist,
+                    oldDate: release_date,
+                    status: 'not_found'
+                });
+            }
+
+            // Add a small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        return {
+            processed: results.length,
+            updated: results.filter(r => r.status === 'updated').length,
+            unchanged: results.filter(r => r.status === 'unchanged').length,
+            notFound: results.filter(r => r.status === 'not_found').length,
+            results
+        };
+    } catch (error) {
+        console.error('[UpdateReleaseDates] Error:', error);
+        throw error;
+    }
+}
+
+// Update release date for a single song
+async function handleUpdateSingleReleaseDate(env: Env, songId: string) {
+    try {
+        // Get song from database
+        const songs = await callSupabase(env, `songs?select=id,title,artist,release_date&id=eq.${songId}`);
+
+        if (!songs || songs.length === 0) {
+            return { success: false, error: 'Song not found' };
+        }
+
+        const song = songs[0];
+        const { title, artist, release_date } = song;
+
+        console.log(`[UpdateSingleReleaseDate] Searching for: "${title}" by "${artist}"`);
+
+        // Search for correct release date using AI
+        const searchResult = await handleSearchReleaseDate(getGeminiApiKey(env), title, artist);
+
+        if (searchResult.found && searchResult.releaseDate) {
+            const newDate = searchResult.releaseDate;
+
+            if (newDate !== release_date) {
+                await callSupabase(env, `songs?id=eq.${songId}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ release_date: newDate })
+                });
+
+                return {
+                    success: true,
+                    updated: true,
+                    oldDate: release_date,
+                    newDate,
+                    source: searchResult.source
+                };
+            } else {
+                return {
+                    success: true,
+                    updated: false,
+                    message: 'Release date is already correct',
+                    currentDate: release_date
+                };
+            }
+        } else {
+            return {
+                success: false,
+                error: 'Could not find release date information'
+            };
+        }
+    } catch (error) {
+        console.error('[UpdateSingleReleaseDate] Error:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
 }
 
 // ============================================================================
@@ -537,15 +852,15 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
         switch (action) {
             // AI Operations
             case "searchSong":
-                result = await handleSearchSong(env.OPENROUTER_API_KEY, data.query);
+                result = await handleSearchSong(getGeminiApiKey(env), data.query);
                 break;
 
             case "fetchLyrics":
-                result = await handleFetchLyrics(env.OPENROUTER_API_KEY, data.title, data.artist);
+                result = await handleFetchLyrics(getGeminiApiKey(env), data.title, data.artist);
                 break;
 
             case "enrichMetadata":
-                result = await handleEnrichMetadata(env.OPENROUTER_API_KEY, data.title, data.artist);
+                result = await handleEnrichMetadata(getGeminiApiKey(env), data.title, data.artist);
                 break;
 
             // Supabase Operations
@@ -618,6 +933,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
                 result = await handleCheckLiked(env, data.songId, checkIp);
                 break;
             }
+
+            // Release Date Update Operations
+            case "searchReleaseDate":
+                result = await handleSearchReleaseDate(getGeminiApiKey(env), data.title, data.artist);
+                break;
+
+            case "updateReleaseDates":
+                result = await handleUpdateReleaseDates(env, {
+                    limit: data.limit || 10,
+                    onlyMissing: data.onlyMissing || false
+                });
+                break;
+
+            case "updateSingleReleaseDate":
+                result = await handleUpdateSingleReleaseDate(env, data.songId);
+                break;
 
             default:
                 return new Response(
